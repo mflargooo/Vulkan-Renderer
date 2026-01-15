@@ -8,11 +8,11 @@ layout(push_constant) uniform Push {
 };
 
 void main() {
-    float mask = step(.25, sin(position.x * 250.0)) - step(.25, sin(position.y * 250.0));
+    float mask = step(.25, sin(position.x * 250.0 - time * 10.0)) - step(.25, sin(position.y * 250.0 - time * 10.0));
     
     // use position as hue
     // hsv to rgb from wikipedia: https://en.wikipedia.org/wiki/HSL_and_HSV#HSV_to_RGB
-    float hue = mod((position.x + position.y) * 20.0, 6.0);
+    float hue = mod((position.x + position.y) * 20.0 + time * 10.0, 6.0);
     float c = 1.0; // chroma = saturation * value; saturation and value as 1.0
     float x = c * (1.0 - abs(mod(hue, 2) - 1));
 
