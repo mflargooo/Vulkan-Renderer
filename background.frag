@@ -8,19 +8,5 @@ layout(push_constant) uniform Push {
 };
 
 void main() {
-    vec2 pos = position - .5;
-    float C = 3.0;
-    float cosT = cos(C * time);
-    float sinT = sin(C * time);
-
-    if (true) {
-        outColor = vec4(0.0);
-        return;
-    }
-    
-    if (length(pos) < .25) {
-        outColor = vec4(cosT * pos.x + sinT * pos.y, cosT * pos.y - sinT * pos.x, (sinT + cosT) * .5, 1.0);
-    } else {
-        outColor = vec4(0.f);
-    }
+    outColor = vec4(position, 0.0, 1.0);
 }

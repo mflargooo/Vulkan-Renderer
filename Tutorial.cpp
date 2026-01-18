@@ -14,6 +14,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 	background_pipeline.create(rtg, render_pass, 0);
 	lines_pipeline.create(rtg, render_pass, 0);
+	objects_pipeline.create(rtg, render_pass, 0);
 
 	{ // create descriptor pool
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size()); // for easier-to-read counting
@@ -92,6 +93,115 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			);
 		}
 	}
+
+	{ // create obj vertices
+		std::vector< PosNorTexVertex > vertices;
+
+		{
+			plane_vertices.first = uint32_t(vertices.size());
+			// [-1,1]x[-1,1]x{0} quad
+			vertices.emplace_back(PosNorTexVertex{
+				.Position{ .x = -1.f, .y = -1.f, .z = 0.f },
+				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
+				.TexCoord{ .s = 0.f, .t = 0.f },
+			});
+			vertices.emplace_back(PosNorTexVertex{
+				.Position{ .x = 1.f, .y = -1.f, .z = 0.f },
+				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
+				.TexCoord{ .s = 1.f, .t = 0.f },
+			});
+			vertices.emplace_back(PosNorTexVertex{
+				.Position{ .x = -1.f, .y = 1.f, .z = 0.f },
+				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
+				.TexCoord{ .s = 0.f, .t = 1.f },
+			});
+			vertices.emplace_back(PosNorTexVertex{
+				.Position{ .x = 1.f, .y = 1.f, .z = 0.f },
+				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
+				.TexCoord{ .s = 1.f, .t = 1.f },
+			});
+			vertices.emplace_back(PosNorTexVertex{
+				.Position{ .x = -1.f, .y = 1.f, .z = 0.f },
+				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
+				.TexCoord{ .s = 0.f, .t = 1.f },
+			});
+			vertices.emplace_back(PosNorTexVertex{
+				.Position{ .x = 1.f, .y = -1.f, .z = 0.f },
+				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
+				.TexCoord{ .s = 1.f, .t = 0.f },
+			});
+
+			plane_vertices.count = uint32_t(vertices.size() - plane_vertices.first);
+		}
+
+		{
+			torus_vertices.first = uint32_t(vertices.size());
+
+			// (u, v) parameterization with
+			// - u is angle around main axis (+z)
+			// - v is angle around tube
+
+			constexpr float R1 = .75f; // main radius
+			constexpr float R2 = .15f; // tube radius
+
+			constexpr uint32_t U_STEPS = 20;
+			constexpr uint32_t V_STEPS = 16;
+
+			// texture repeats around torus
+			constexpr float V_REPEATS = 2.f;
+			constexpr float U_REPEATS = int(V_REPEATS / R2 * R1 + .999f); // approx sqr rounded up
+
+			auto emplace_vertex = [&](uint32_t ui, uint32_t vi) {
+				// convert steps to angles
+				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.f * float (M_PI);
+				float va = (vi % V_STEPS) / float(V_STEPS) * 2.f * float (M_PI);
+
+				vertices.emplace_back( PosNorTexVertex{
+					.Position {
+						.x = (R1 + R2 * std::cos(va)) * std::cos(ua),
+						.y = (R1 + R2 * std::cos(va)) * std::sin(ua),
+						.z = R2 * std::sin(va),
+					},
+					.Normal {
+						.x = std::cos(va) * std::cos(ua),
+						.y = std::cos(va) * std::sin(ua),
+						.z = std::sin(va),
+					},
+					.TexCoord{
+						.s = ui / float(U_STEPS) * U_REPEATS,
+						.t = vi / float(V_STEPS) * V_REPEATS,
+					},
+				});
+			};
+
+			for (uint32_t ui = 0; ui < U_STEPS; ++ui) {
+				for (uint32_t vi = 0; vi < V_STEPS; ++vi) {
+					emplace_vertex(ui, vi);
+					emplace_vertex(ui+1, vi);
+					emplace_vertex(ui, vi+1);
+
+					emplace_vertex(ui, vi+1);
+					emplace_vertex(ui+1, vi);
+					emplace_vertex(ui+1, vi+1);
+
+				}
+			}
+
+			torus_vertices.count = uint32_t(vertices.size() - torus_vertices.first);
+		}
+
+		size_t bytes = vertices.size() * sizeof(vertices[0]);
+
+		object_vertices = rtg.helpers.create_buffer(
+			bytes,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+
+		// copy data to buf
+		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
+	}
 }
 
 Tutorial::~Tutorial() {
@@ -100,6 +210,8 @@ Tutorial::~Tutorial() {
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
+
+	rtg.helpers.destroy_buffer(std::move(object_vertices));
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
 		destroy_framebuffers();
@@ -132,6 +244,7 @@ Tutorial::~Tutorial() {
 
 	background_pipeline.destroy(rtg);
 	lines_pipeline.destroy(rtg);
+	objects_pipeline.destroy(rtg);
 
 	refsol::Tutorial_destructor(rtg, &render_pass, &command_pool);
 }
@@ -329,6 +442,21 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
 		}
 
+		{ // draw w objects pipeline
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
+
+			{ // use object_vertices (offset 0) as vert buf binding 0
+				std::array< VkBuffer, 1 > vertex_buffers{ object_vertices.handle };
+				std::array< VkDeviceSize, 1 > offsets{ 0 };
+				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+			}
+
+			// cam descriptor set still bound
+
+			// draw verts
+			vkCmdDraw(workspace.command_buffer, uint32_t(object_vertices.size / sizeof(ObjectsPipeline::Vertex)), 1, 0, 0);
+		}
+
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
 
@@ -343,32 +471,29 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 void Tutorial::update(float dt) {
 	time = std::fmod(time + dt, 60.f);
 
-	float cosT = std::cos(time);
-	float sinT = std::sin(time);
-
-	{ // camera orbiting origin
-		constexpr float Initial_zoom = 3.f;
-		float angle = float(M_PI) * 2.f * 10.f * (time / 60.f);
+	{ //camera orbiting the origin:
+		float ang = float(M_PI) * 2.0f * 10.0f * (time / 60.0f);
 		CLIP_FROM_WORLD = perspective(
-			60.f * float(M_PI) / 180.f, // vfov
-			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), // aspect
-			0.1f, // near
-			1000.f // far
+			60.0f * float(M_PI) / 180.0f, //vfov
+			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
+			0.1f, //near
+			1000.0f //far
 		) * look_at(
-			(Initial_zoom - (sinT - 1.f) * 3.f) * std::cos(angle), (Initial_zoom - (sinT - 1.f) * 3.f) * std::sin(angle), (Initial_zoom - (sinT - 1.f) * 3.f), // eye
-			0.f, 0.f, 0.f, // target
-			sinT, cosT, 0.f // up
+			3.0f * std::cos(ang), 3.0f * std::sin(ang), 1.0f, //eye
+			0.0f, 0.0f, 0.5f, //target
+			0.0f, 0.0f, 1.0f //up
 		);
 	}
 
 	{ // make cylinder
 		lines_vertices.clear();
 		static size_t max_count = 0;
+		constexpr int lines = 20;
 
-		int side_lines = 1950 + int(2050 * sinT);
+		int side_lines = lines;
 		if (side_lines < 0) side_lines = 0;
 
-		int face_lines = 1950 + int(2050 * sinT);
+		int face_lines = 2 * lines;
 		if (face_lines < 0) face_lines = 0;
 
 		size_t count = size_t(2 * side_lines + 2 * face_lines * 2);
@@ -383,11 +508,11 @@ void Tutorial::update(float dt) {
 			float x = std::cos(angle);
 			float y = std::sin(angle);
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = Line_len * sinT *.5f},
+				.Position{.x = x, .y = y, .z = Line_len *.5f},
 				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
 			});
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = -Line_len * sinT * .5f},
+				.Position{.x = x, .y = y, .z = -Line_len * .5f},
 				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
 			});
 		}
@@ -399,24 +524,24 @@ void Tutorial::update(float dt) {
 
 			// circle face 1
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = -Line_len * sinT * .5f},
+				.Position{.x = x, .y = y, .z = -Line_len * .5f},
 				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
 				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -x, .y = y, .z = -Line_len * sinT * .5f},
+				.Position{.x = -x, .y = y, .z = -Line_len * .5f},
 				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
 				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
 
 			// circle face 2
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = Line_len * sinT * .5f},
+				.Position{.x = x, .y = y, .z = Line_len * .5f},
 				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
 				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -x, .y = y, .z = Line_len * sinT * .5f},
+				.Position{.x = -x, .y = y, .z = Line_len * .5f},
 				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
 				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
