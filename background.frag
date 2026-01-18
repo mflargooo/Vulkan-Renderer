@@ -13,6 +13,11 @@ void main() {
     float cosT = cos(C * time);
     float sinT = sin(C * time);
 
+    if (true) {
+        outColor = vec4(0.0);
+        return;
+    }
+    
     if (length(pos) < .25) {
         outColor = vec4(cosT * pos.x + sinT * pos.y, cosT * pos.y - sinT * pos.x, (sinT + cosT) * .5, 1.0);
     } else {

@@ -347,6 +347,7 @@ void Tutorial::update(float dt) {
 	float sinT = std::sin(time);
 
 	{ // camera orbiting origin
+		constexpr float Initial_zoom = 3.f;
 		float angle = float(M_PI) * 2.f * 10.f * (time / 60.f);
 		CLIP_FROM_WORLD = perspective(
 			60.f * float(M_PI) / 180.f, // vfov
@@ -354,7 +355,7 @@ void Tutorial::update(float dt) {
 			0.1f, // near
 			1000.f // far
 		) * look_at(
-			(4.f + sinT) * std::cos(angle), (4.f + sinT) * std::sin(angle), (4.f + sinT), // eye
+			(Initial_zoom - (sinT - 1.f) * 3.f) * std::cos(angle), (Initial_zoom - (sinT - 1.f) * 3.f) * std::sin(angle), (Initial_zoom - (sinT - 1.f) * 3.f), // eye
 			0.f, 0.f, 0.f, // target
 			sinT, cosT, 0.f // up
 		);
@@ -362,50 +363,62 @@ void Tutorial::update(float dt) {
 
 	{ // make cylinder
 		lines_vertices.clear();
+		static size_t max_count = 0;
 
-		size_t side_lines = 250 + size_t(250 * sinT);
-		size_t face_lines = 250 + size_t(250 * sinT);
-		size_t count = 2 * side_lines + 2 * face_lines * 2;
-		lines_vertices.reserve(count);
+		int side_lines = 1950 + int(2050 * sinT);
+		if (side_lines < 0) side_lines = 0;
 
+		int face_lines = 1950 + int(2050 * sinT);
+		if (face_lines < 0) face_lines = 0;
+
+		size_t count = size_t(2 * side_lines + 2 * face_lines * 2);
+
+		if (count > max_count) max_count = count;
+		lines_vertices.reserve(max_count);
+
+		constexpr float Line_len = 3.f;
 		// cylinder side_lines
-		for (uint32_t i = 0; i < side_lines; ++i) {
+		for (int i = 0; i < side_lines; ++i) {
 			float angle = 2.f * (float)M_PI / (float)side_lines * i; 
 			float x = std::cos(angle);
 			float y = std::sin(angle);
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = sinT},
-				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
+				.Position{.x = x, .y = y, .z = Line_len * sinT *.5f},
+				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
 			});
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = -sinT},
-				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
+				.Position{.x = x, .y = y, .z = -Line_len * sinT * .5f},
+				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
 			});
 		}
 
-		for (uint32_t i = 0; i < face_lines; ++i) {
+		for (int i = 0; i < face_lines; ++i) {
 			float angle = 2.f * (float)M_PI / (float)side_lines * i; 
 			float x = std::cos(angle);
 			float y = std::sin(angle);
 
 			// circle face 1
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = sinT},
-				.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
+				.Position{.x = x, .y = y, .z = -Line_len * sinT * .5f},
+				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
+				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -x, .y = y, .z = sinT},
-				.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
+				.Position{.x = -x, .y = y, .z = -Line_len * sinT * .5f},
+				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
+				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
 
 			// circle face 2
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = -sinT},
-				.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
+				.Position{.x = x, .y = y, .z = Line_len * sinT * .5f},
+				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
+				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
 			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -x, .y = y, .z = -sinT},
-				.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
+				.Position{.x = -x, .y = y, .z = Line_len * sinT * .5f},
+				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
+				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
 			});
 		}
 
