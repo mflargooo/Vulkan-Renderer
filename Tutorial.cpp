@@ -1053,9 +1053,9 @@ void Tutorial::update(float dt) {
 		constexpr float Spacing = 2.f;
 
 		auto emplace_rotating_torus = [&](uint32_t w, uint32_t h, uint32_t d) {
-			float x = (float(w) - Width / 2.f) * Spacing;
-			float y = (float(h) - Height / 2.f) * Spacing;
-			float z = (float(d) - Depth / 2.f) * Spacing;
+			float x = (float(w) - float(Width) / 2.f + .5f) * Spacing;
+			float y = (float(h) - float(Height) / 2.f + .5f) * Spacing;
+			float z = (float(d) - float(Depth) / 2.f + .5f) * Spacing;
 			float ang = time / 60.f * 2.f * float(M_PI) * 10.f;
 			float ca = std::cos(ang);
 			float sa = std::sin(ang);
@@ -1077,9 +1077,9 @@ void Tutorial::update(float dt) {
 		};
 
 		auto emplace_sphere = [&](uint32_t w, uint32_t h, uint32_t d) {
-			float x = (float(w) - Width / 2.f) * Spacing;
-			float y = (float(h) - Height / 2.f) * Spacing;
-			float z = (float(d) - Depth / 2.f) * Spacing;
+			float x = (float(w) - float(Width) / 2.f + .5f) * Spacing;
+			float y = (float(h) - float(Height) / 2.f + .5f) * Spacing;
+			float z = (float(d) - float(Depth) / 2.f + .5f) * Spacing;
 			mat4 WORLD_FROM_LOCAL{
 				1.f, 0.f, 0.f, 0.f,
 				0.f, 1.f, 0.f, 0.f,
