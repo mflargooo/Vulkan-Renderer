@@ -19,17 +19,21 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	{ // create descriptor pool
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size()); // for easier-to-read counting
 
-		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+		std::array< VkDescriptorPoolSize, 2 > pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 				.descriptorCount = 1 * per_workspace, // one descriptor per set, one set per workspace
+			},
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.descriptorCount = 1 * per_workspace, // same comment
 			},
 		};
 
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0, // omission of CREATE_FREE_DESCRIPTOR_SET_BIT, prevent individual descriptors allocated from this pool
-			.maxSets = 1 * per_workspace, // one set per workspace
+			.maxSets = 2 * per_workspace, // two sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -63,6 +67,18 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			};
 
 			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Camera_descriptors) );
+		}
+
+		{ // allocate descriptor set for Transforms descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set1_Transforms,
+			};
+
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Transforms_descriptors) );
+			// will fill in this descriptor set in render when buffers are [re-]allocated
 		}
 
 		{ // point descriptor to camera buffer
@@ -141,8 +157,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			// - u is angle around main axis (+z)
 			// - v is angle around tube
 
-			constexpr float R1 = .75f; // main radius
-			constexpr float R2 = .15f; // tube radius
+			constexpr float R1 = .075f; // main radius
+			constexpr float R2 = .015f; // tube radius
 
 			constexpr uint32_t U_STEPS = 20;
 			constexpr uint32_t V_STEPS = 16;
@@ -193,12 +209,12 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		{
 			sphere_vertices.first = uint32_t(vertices.size());
 
-			constexpr float A = 1.25f;
-			constexpr float B = .75f;
-			constexpr float C = .5f;
+			constexpr float A = .025f;
+			constexpr float B = .025f;
+			constexpr float C = .025f;
 			constexpr float C_x = 0.f;
 			constexpr float C_y = 0.f;
-			constexpr float C_z = .5f;
+			constexpr float C_z = 0.f;
 
 			constexpr uint32_t V_STEPS = 40; // phi
 			constexpr uint32_t U_STEPS = 2 * V_STEPS; // theta
@@ -286,6 +302,14 @@ Tutorial::~Tutorial() {
 		if (workspace.Camera.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.Camera));
 		}
+
+		if (workspace.Transforms_src.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Transforms_src));
+		}
+		if (workspace.Transforms.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Transforms));
+		}
+		// Transforms_descriptors freed when pool is destroyed.
 	}
 	workspaces.clear();
 
@@ -369,6 +393,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// host-side copy into lines_vertices_src
 			assert(workspace.lines_vertices_src.allocation.mapped);
 			std::memcpy(workspace.lines_vertices_src.allocation.data(), lines_vertices.data(), needed_bytes);
+			
 			// device-side copy from lines_vertices_src -> lines_vertices
 			VkBufferCopy copy_region{
 				.srcOffset = 0,
@@ -377,26 +402,102 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			};
 			vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_region);
 		}
+	}
+
+	{ // upload cam info
+		LinesPipeline::Camera camera{
+			.CLIP_FROM_WORLD = CLIP_FROM_WORLD
+		};
+		assert(workspace.Camera_src.size == sizeof(camera));
+
+		// host-side copy into Camera_src
+		memcpy(workspace.Camera_src.allocation.data(), &camera, sizeof(camera));
 		
-		{ // upload cam info
-			LinesPipeline::Camera camera{
-				.CLIP_FROM_WORLD = CLIP_FROM_WORLD
-			};
-			assert(workspace.Camera_src.size == sizeof(camera));
+		// add device-side copy from Camera_src -> Camera
+		assert(workspace.Camera_src.size == workspace.Camera.size);
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = workspace.Camera_src.size,
+		};
 
-			// host-side copy into Camera_src
-			memcpy(workspace.Camera_src.allocation.data(), &camera, sizeof(camera));
-			
-			// add device-side copy from Camera_src -> Camera
-			assert(workspace.Camera_src.size == workspace.Camera.size);
-			VkBufferCopy copy_region{
-				.srcOffset = 0,
-				.dstOffset = 0,
-				.size = workspace.Camera_src.size,
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
+	}
+
+	if (!object_instances.empty()) {
+		// [re-]allocate line bufs in needed
+		size_t needed_bytes = object_instances.size() * sizeof(ObjectsPipeline::Transform);
+		if (workspace.Transforms_src.handle == VK_NULL_HANDLE || workspace.Transforms_src.size < needed_bytes) {
+			// round to next mult of 4k to avoid realloc continuously if vert count grows slowly
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+			if (workspace.Transforms_src.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.Transforms_src));
+			}
+			if (workspace.Transforms.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.Transforms));
+			}
+
+			workspace.Transforms_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // going to have GPU copy from this mem
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible mem, coherent (no special sync needed)
+				Helpers::Mapped // get a pointer to the mem
+			);
+			workspace.Transforms = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buf, also going to have GPU into this mem
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // GPU-local mem
+				Helpers::Unmapped // don't get a pointer to the mem
+			);
+
+			// update descriptor set
+			VkDescriptorBufferInfo Transforms_info{
+				.buffer = workspace.Transforms.handle,
+				.offset = 0,
+				.range = workspace.Transforms.size,
 			};
 
-			vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
+			std::array< VkWriteDescriptorSet, 1 > writes{
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Transforms_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Transforms_info,
+				},
+			};
+
+			vkUpdateDescriptorSets(
+				rtg.device,
+				uint32_t(writes.size()), writes.data(), // descriptorWrites count, data
+				0, nullptr // descriptorCopies count, data
+			);
+
+			std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
 		}
+		
+		assert(workspace.Transforms_src.size == workspace.Transforms.size);
+		assert(workspace.Transforms_src.size >= needed_bytes);
+		
+		{ // copy transforms into Transforms_src
+			assert(workspace.Transforms_src.allocation.mapped);
+			ObjectsPipeline::Transform *out = reinterpret_cast< ObjectsPipeline::Transform* >(workspace.Transforms_src.allocation.data()); // strict aliasing violation, but doesnt matter
+
+			for (ObjectInstance const &inst : object_instances) {
+				*out = inst.transform;
+				++out;
+			}
+		}
+
+		// device-side copy from lines_vertices_src -> lines_vertices
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = needed_bytes,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
 	}
 
 	{ // mem barrier to make sure copies complete before rendering happens
@@ -495,7 +596,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
 		}
 
-		{ // draw w objects pipeline
+		if (!object_instances.empty()) { // draw w objects pipeline
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
 
 			{ // use object_vertices (offset 0) as vert buf binding 0
@@ -504,10 +605,27 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
 
-			// cam descriptor set still bound
+			{ // bind Transforms descriptor set
+				std::array< VkDescriptorSet, 1 > descriptor_sets {
+					workspace.Transforms_descriptors,
+				};
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					1, // first set
+					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+			}
 
-			// draw verts
-			vkCmdDraw(workspace.command_buffer, uint32_t(object_vertices.size / sizeof(ObjectsPipeline::Vertex)), 1, 0, 0);
+			// cam descriptor set still bound but unused
+
+			// draw all instances
+			for (ObjectInstance const &inst : object_instances) {
+				uint32_t index = uint32_t(&inst - &object_instances[0]);
+				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+			}
 		}
 
 		vkCmdEndRenderPass(workspace.command_buffer);
@@ -532,7 +650,7 @@ void Tutorial::update(float dt) {
 			0.1f, //near
 			1000.0f //far
 		) * look_at(
-			3.0f * std::cos(ang), 3.0f * std::sin(ang), 1.0f, //eye
+			10.0f * std::cos(ang), 10.0f * std::sin(ang), 1.0f, //eye
 			0.0f, 0.0f, 0.5f, //target
 			0.0f, 0.0f, 1.0f //up
 		);
@@ -601,6 +719,91 @@ void Tutorial::update(float dt) {
 		}
 
 		assert(lines_vertices.size() == count);
+	}
+
+	{ // make some objects
+		object_instances.clear();
+
+		{ // plane translated +x by one unit
+			mat4 WORLD_FROM_LOCAL{
+				1.f, 0.f, 0.f, 0.f,
+				0.f, 1.f, 0.f, 0.f,
+				0.f, 0.f, 1.f, 0.f,
+				0.f, 0.f, 0.f, 1.f,
+			};
+
+			object_instances.emplace_back(ObjectInstance{
+				.vertices = plane_vertices,
+				.transform{
+					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
+				},
+			});
+		}
+
+		constexpr size_t Width = 20;
+		constexpr size_t Height = 20;
+		constexpr size_t Depth = 20;
+		constexpr float Spacing = .625f;
+
+		auto emplace_rotating_torus = [&](uint32_t w, uint32_t h, uint32_t d) {
+			float x = (float(w) - Width / 2.f) * Spacing;
+			float y = (float(h) - Height / 2.f) * Spacing;
+			float z = (float(d) - Depth / 2.f) * Spacing;
+			float ang = time / 60.f * 2.f * float(M_PI) * 10.f;
+			float ca = std::cos(ang);
+			float sa = std::sin(ang);
+			mat4 WORLD_FROM_LOCAL{
+				ca, 0.f, -sa, 0.f,
+				0.f, 1.f, 0.f, 0.f,
+				sa, 0.f, ca, 0.f,
+				x, y, z, 1.f,
+			};
+
+			object_instances.emplace_back(ObjectInstance{
+				.vertices = torus_vertices,
+				.transform{
+					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
+				},
+			});
+		};
+
+		auto emplace_sphere = [&](uint32_t w, uint32_t h, uint32_t d) {
+			float x = (float(w) - Width / 2.f) * Spacing;
+			float y = (float(h) - Height / 2.f) * Spacing;
+			float z = (float(d) - Depth / 2.f) * Spacing;
+			mat4 WORLD_FROM_LOCAL{
+				1.f, 0.f, 0.f, 0.f,
+				0.f, 1.f, 0.f, 0.f,
+				0.f, 0.f, 1.f, 0.f,
+				x, y, z, 1.f,
+			};
+
+			object_instances.emplace_back(ObjectInstance{
+				.vertices = sphere_vertices,
+				.transform{
+					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
+					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
+				},
+			});
+		};
+
+		for (uint32_t w = 0; w < Width; ++w) {
+			for (uint32_t h = 0; h < Height; ++h) {
+				for (uint32_t d = 0; d < Depth; ++d) {
+					emplace_rotating_torus(w, h, d);
+					emplace_sphere(w, h, d);
+				}
+			}
+		} 
+		
+		{ // torus translated by one unit and rotated CCW around +y
+
+		}
 	}
 }
 
