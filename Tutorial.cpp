@@ -22,7 +22,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		std::array< VkDescriptorPoolSize, 2 > pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 1 * per_workspace, // one descriptor per set, one set per workspace
+				.descriptorCount = 2 * per_workspace, // one descriptor per set, two set per workspace
 			},
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -33,7 +33,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0, // omission of CREATE_FREE_DESCRIPTOR_SET_BIT, prevent individual descriptors allocated from this pool
-			.maxSets = 2 * per_workspace, // two sets per workspace
+			.maxSets = 3 * per_workspace, // three sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -69,6 +69,30 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Camera_descriptors) );
 		}
 
+		workspace.World_src = rtg.helpers.create_buffer(
+			sizeof(ObjectsPipeline::World),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			Helpers::Mapped
+		);
+		workspace.World = rtg.helpers.create_buffer(
+			sizeof(ObjectsPipeline::World),
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+
+		{ // allocate descriptor set for World descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set0_World,
+			};
+
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.World_descriptors) );
+		}
+
 		{ // allocate descriptor set for Transforms descriptor
 			VkDescriptorSetAllocateInfo alloc_info{
 				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -88,7 +112,13 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				.range = workspace.Camera.size,
 			};
 
-			std::array< VkWriteDescriptorSet, 1 > writes{
+			VkDescriptorBufferInfo World_info{
+				.buffer = workspace.World.handle,
+				.offset = 0,
+				.range = workspace.World.size,
+			};
+
+			std::array< VkWriteDescriptorSet, 2 > writes{
 				VkWriteDescriptorSet{
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 					.dstSet = workspace.Camera_descriptors,
@@ -97,6 +127,15 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 					.descriptorCount = 1,
 					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 					.pBufferInfo = &Camera_info,
+				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.World_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+					.pBufferInfo = &World_info,
 				},
 			};
 
@@ -150,6 +189,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			plane_vertices.count = uint32_t(vertices.size() - plane_vertices.first);
 		}
 
+		constexpr float Scale = 10.f;
 		{
 			torus_vertices.first = uint32_t(vertices.size());
 
@@ -157,8 +197,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			// - u is angle around main axis (+z)
 			// - v is angle around tube
 
-			constexpr float R1 = .075f; // main radius
-			constexpr float R2 = .015f; // tube radius
+			constexpr float R1 = .075f * Scale; // main radius
+			constexpr float R2 = .015f * Scale; // tube radius
 
 			constexpr uint32_t U_STEPS = 20;
 			constexpr uint32_t V_STEPS = 16;
@@ -209,9 +249,9 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		{
 			sphere_vertices.first = uint32_t(vertices.size());
 
-			constexpr float A = .025f;
-			constexpr float B = .025f;
-			constexpr float C = .025f;
+			constexpr float A = .025f * Scale;
+			constexpr float B = .025f * Scale;
+			constexpr float C = .025f * Scale;
 			constexpr float C_x = 0.f;
 			constexpr float C_y = 0.f;
 			constexpr float C_z = 0.f;
@@ -271,6 +311,176 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		// copy data to buf
 		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
 	}
+
+	{ // make some textures
+		{ // tex 0 is dark / light grey checker with red origin
+			uint32_t size = 128;
+			std::vector< uint32_t > data;
+			data.reserve(size * size);
+			for (uint32_t y = 0; y < size; ++y) {
+				float fy = (y + .5f) / float(size);
+				for (uint32_t x = 0; x < size; ++x) {
+					float fx = (x + .5f) / float(size);
+					// highlight origin
+					if (fx < .05f && fy < .05f) data.emplace_back(0xff0000ff);
+					else if ((fx < .5f) == (fy < .5f)) data.emplace_back(0xff444444);
+					else data.emplace_back(0xffbbbbbb);
+				}
+			}
+			assert(data.size() == size * size);
+
+			// make place for tex to live on GPU
+			textures.emplace_back(rtg.helpers.create_image(
+				VkExtent2D{ .width = size, .height = size }, // size of img
+				VK_FORMAT_R8G8B8A8_UNORM, // how to interpret image data
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+				Helpers::Unmapped
+			));
+
+			// transfer data
+			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+		}
+
+		{ // tex 1 will be classic 'xor' tex
+			uint32_t size = 256;
+			std::vector< uint32_t > data;
+			data.reserve(size * size);
+			for (uint32_t y = 0; y < size; ++y) {
+				for (uint32_t x = 0; x < size; ++x) {
+					uint8_t r = uint8_t(x) ^ uint8_t(y);
+					uint8_t g = uint8_t(x + 128) ^ uint8_t(y);
+					uint8_t b = uint8_t(x) ^ uint8_t(y + 27);
+					uint8_t a = 0xff;
+					data.emplace_back( uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24) );
+				}
+			}
+			assert(data.size() == size * size);
+
+			// make a place for the tex to live on GPU
+			textures.emplace_back(rtg.helpers.create_image(
+				VkExtent2D{ .width = size, .height = size }, // size of img
+				VK_FORMAT_R8G8B8A8_SRGB, // how to interpret image data
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+				Helpers::Unmapped
+			));
+
+			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+		}
+	}
+
+	{ // make image views for the textures
+		texture_views.reserve(textures.size());
+		for (Helpers::AllocatedImage const &image : textures) {
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = image.handle,
+				.viewType = VK_IMAGE_VIEW_TYPE_2D,
+				.format = image.format,
+				// .components sets swizzling and is fine when zero inited
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = 1,
+					.baseArrayLayer = 0,
+					.layerCount = 1,
+				},
+			};
+
+			VkImageView image_view = VK_NULL_HANDLE;
+			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
+
+			texture_views.emplace_back(image_view);
+		}
+		assert(texture_views.size() == textures.size());
+	}
+
+	{ // make a sampler for the textures
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.flags = 0,
+			.magFilter = VK_FILTER_NEAREST,
+			.minFilter = VK_FILTER_NEAREST,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.mipLodBias = 0.f,
+			.anisotropyEnable  = VK_FALSE,
+			.maxAnisotropy = 0.f,
+			.compareEnable = VK_FALSE,
+			.compareOp = VK_COMPARE_OP_ALWAYS,
+			.minLod = 0.f,
+			.maxLod = 0.f,
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &texture_sampler) );
+	}
+
+	{ // create the texture descriptor pool
+		uint32_t per_texture = uint32_t(textures.size()); // for easier to read counting
+
+		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1 * 1 * per_texture, // one desc per set, on set per tex
+			},
+		};
+
+		VkDescriptorPoolCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+			.maxSets = 1 * per_texture, // one set per texture
+			.poolSizeCount = uint32_t(pool_sizes.size()),
+			.pPoolSizes = pool_sizes.data(),
+		};
+
+		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &texture_descriptor_pool) );
+	}
+
+	{ // allocate and write the texture descriptor sets
+		// allocate the descriptors (using same alloc_info)
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = texture_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set2_TEXTURE,
+		};
+		texture_descriptors.assign(textures.size(), VK_NULL_HANDLE);
+		for (VkDescriptorSet &descriptor_set : texture_descriptors) {
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set) );
+		}
+
+		// write descriptor for textures
+		std::vector< VkDescriptorImageInfo > infos(textures.size());
+		std::vector< VkWriteDescriptorSet > writes(textures.size());
+
+		for (Helpers::AllocatedImage const &image : textures) {
+			size_t i = &image - &textures[0];
+
+			infos[i] = VkDescriptorImageInfo{
+				.sampler = texture_sampler,
+				.imageView = texture_views[i],
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+			writes[i] = VkWriteDescriptorSet{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = texture_descriptors[i],
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &infos[i],
+			};
+		}
+
+		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
+	}
 }
 
 Tutorial::~Tutorial() {
@@ -279,6 +489,30 @@ Tutorial::~Tutorial() {
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
+
+	if (texture_descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, texture_descriptor_pool, nullptr);
+		texture_descriptor_pool = nullptr;
+		
+		// this also frees descriptor sets allocated from pool
+		texture_descriptors.clear();
+	}
+
+	if (texture_sampler) {
+		vkDestroySampler(rtg.device, texture_sampler, nullptr);
+		texture_sampler = VK_NULL_HANDLE;
+	}
+
+	for (VkImageView &view : texture_views) {
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	texture_views.clear();
+
+	for (auto &texture : textures) {
+		rtg.helpers.destroy_image(std::move(texture));
+	}
+	textures.clear();
 
 	rtg.helpers.destroy_buffer(std::move(object_vertices));
 
@@ -302,6 +536,15 @@ Tutorial::~Tutorial() {
 		if (workspace.Camera.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.Camera));
 		}
+		// Camera_descriptors freed when pool is destroyed
+
+		if (workspace.World_src.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.World_src));
+		}
+		if (workspace.World.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.World));
+		}
+		// World_descriptors freed when pool is destroyed
 
 		if (workspace.Transforms_src.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.Transforms_src));
@@ -424,6 +667,23 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
 	}
 
+	{ // upload world info
+		assert(workspace.World_src.size == sizeof(world));
+
+		// host-side copy into World_src
+		memcpy(workspace.World_src.allocation.data(), &world, sizeof(world));
+
+		// add device-side copy form World_src -> World
+		assert(workspace.World_src.size == workspace.World.size);
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = workspace.World_src.size,
+		};
+		
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.World_src.handle, workspace.World.handle, 1, &copy_region);
+	}
+
 	if (!object_instances.empty()) {
 		// [re-]allocate line bufs in needed
 		size_t needed_bytes = object_instances.size() * sizeof(ObjectsPipeline::Transform);
@@ -445,7 +705,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			);
 			workspace.Transforms = rtg.helpers.create_buffer(
 				new_bytes,
-				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buf, also going to have GPU into this mem
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buf, also going to have GPU into this mem
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // GPU-local mem
 				Helpers::Unmapped // don't get a pointer to the mem
 			);
@@ -605,15 +865,16 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
 
-			{ // bind Transforms descriptor set
-				std::array< VkDescriptorSet, 1 > descriptor_sets {
-					workspace.Transforms_descriptors,
+			{ // bind World and Transforms descriptor sets
+				std::array< VkDescriptorSet, 2 > descriptor_sets {
+					workspace.World_descriptors, // 0: World
+					workspace.Transforms_descriptors, // 1: Transforms
 				};
 				vkCmdBindDescriptorSets(
 					workspace.command_buffer, // cmd buf
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
-					1, // first set
+					0, // first set
 					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
@@ -624,6 +885,17 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// draw all instances
 			for (ObjectInstance const &inst : object_instances) {
 				uint32_t index = uint32_t(&inst - &object_instances[0]);
+
+				// bind texture descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					2, // second set
+					1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
 				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
 			}
 		}
@@ -654,6 +926,24 @@ void Tutorial::update(float dt) {
 			0.0f, 0.0f, 0.5f, //target
 			0.0f, 0.0f, 1.0f //up
 		);
+	}
+
+	{ // static sun and sky
+		world.SKY_DIRECTION.x = 0.f;
+		world.SKY_DIRECTION.y = 0.f;
+		world.SKY_DIRECTION.z = 1.f;
+
+		world.SKY_ENERGY.r = .1f;
+		world.SKY_ENERGY.g = .1f;
+		world.SKY_ENERGY.b = .2f;
+
+		world.SUN_DIRECTION.x = 6.f / 23.f;
+		world.SUN_DIRECTION.y = 13.f / 23.f;
+		world.SUN_DIRECTION.z = 18.f / 23.f;
+
+		world.SUN_ENERGY.r = 1.f;
+		world.SUN_ENERGY.g = 1.f;
+		world.SUN_ENERGY.b = .9f;
 	}
 
 	{ // make cylinder
@@ -742,10 +1032,10 @@ void Tutorial::update(float dt) {
 			});
 		}
 
-		constexpr size_t Width = 20;
-		constexpr size_t Height = 20;
-		constexpr size_t Depth = 20;
-		constexpr float Spacing = .625f;
+		constexpr size_t Width = 5;
+		constexpr size_t Height = 5;
+		constexpr size_t Depth = 5;
+		constexpr float Spacing = 2.f;
 
 		auto emplace_rotating_torus = [&](uint32_t w, uint32_t h, uint32_t d) {
 			float x = (float(w) - Width / 2.f) * Spacing;
@@ -789,6 +1079,7 @@ void Tutorial::update(float dt) {
 					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
 					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
 				},
+				.texture = 1,
 			});
 		};
 
