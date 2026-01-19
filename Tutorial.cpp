@@ -167,7 +167,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 						.y = std::cos(va) * std::sin(ua),
 						.z = std::sin(va),
 					},
-					.TexCoord{
+					.TexCoord {
 						.s = ui / float(U_STEPS) * U_REPEATS,
 						.t = vi / float(V_STEPS) * V_REPEATS,
 					},
@@ -188,6 +188,59 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			}
 
 			torus_vertices.count = uint32_t(vertices.size() - torus_vertices.first);
+		}
+
+		{
+			sphere_vertices.first = uint32_t(vertices.size());
+
+			constexpr float A = 1.25f;
+			constexpr float B = .75f;
+			constexpr float C = .5f;
+			constexpr float C_x = 0.f;
+			constexpr float C_y = 0.f;
+			constexpr float C_z = .5f;
+
+			constexpr uint32_t V_STEPS = 40; // phi
+			constexpr uint32_t U_STEPS = 2 * V_STEPS; // theta
+
+			constexpr float V_REPEATS = 4.f;
+			constexpr float U_REPEATS = 2 * V_REPEATS;
+
+			auto emplace_vertex = [&](uint32_t ui, uint32_t vi) {
+				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.f * float(M_PI);
+				float va = (vi % V_STEPS) / float(V_STEPS) * float(M_PI) * 2.f;
+
+				vertices.emplace_back( PosNorTexVertex{
+					.Position {
+						.x = A * std::sin(va) * std::cos(ua) + C_x,
+						.y = B * std::sin(va) * std::sin(ua) + C_y,
+						.z = C * std::cos(va) + C_z,
+					},
+					.Normal {
+						.x = std::sin(va) * std::cos(ua),
+						.y = std::sin(va) * std::sin(ua),
+						.z = std::cos(va),
+					},
+					.TexCoord {
+						.s = ui / float(U_STEPS) * U_REPEATS,
+						.t = vi / float(V_STEPS) * V_REPEATS,
+					},
+				});
+			};
+
+			for (uint32_t ui = 0; ui < U_STEPS; ++ui) {
+				for (uint32_t vi = 0; vi < V_STEPS; ++vi) {
+					emplace_vertex(ui, vi);
+					emplace_vertex(ui+1, vi);
+					emplace_vertex(ui, vi+1);
+
+					emplace_vertex(ui, vi+1);
+					emplace_vertex(ui+1, vi);
+					emplace_vertex(ui+1, vi+1);
+				}
+			}
+
+			sphere_vertices.count = uint32_t(vertices.size() - sphere_vertices.first);
 		}
 
 		size_t bytes = vertices.size() * sizeof(vertices[0]);
