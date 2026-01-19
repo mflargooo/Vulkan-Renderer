@@ -161,7 +161,28 @@ struct Tutorial : RTG::Application {
 	virtual void update(float dt) override;
 	virtual void on_input(InputEvent const &) override;
 
+	// modal action, intercepts inputs
+	std::function< void(InputEvent const &) > action;
+	
 	float time = 0.f;
+
+	// selecting between cams
+	enum class CameraMode {
+		Scene = 0,
+		Free = 1,
+	} camera_mode = CameraMode::Free;
+
+	struct OrbitCamera { // used when camera_mode == CameraMode::Free
+		float target_x = 0.f, target_y = 0.f, target_z = 0.f; // cam looking + orbiting
+		float radius = 2.f; // dist from cam to target
+		float azimuth = 0.f; // ccw angle around z between x and cam dir (rads)
+		float elevation = .25f * float(M_PI); // angle from xy plane to cam dir (rads)
+
+		float fov = 60.f / 180.f * float(M_PI); // vfov (rad)
+		float near = .1f; // near clip
+		float far = 1000.f; // far clip
+	} free_camera;
+	
 
 	mat4 CLIP_FROM_WORLD;
 
