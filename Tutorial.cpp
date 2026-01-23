@@ -11,6 +11,9 @@
 #include <cstring>
 #include <iostream>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "external/stb/stb_image.h"
+
 Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	refsol::Tutorial_constructor(rtg, &depth_format, &render_pass, &command_pool);
 
@@ -206,7 +209,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			constexpr uint32_t V_STEPS = 16;
 
 			// texture repeats around torus
-			constexpr float V_REPEATS = 2.f;
+			constexpr float V_REPEATS = 1.f;
 			constexpr float U_REPEATS = int(V_REPEATS / R2 * R1 + .999f); // approx sqr rounded up
 
 			auto emplace_vertex = [&](uint32_t ui, uint32_t vi) {
@@ -261,7 +264,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			constexpr uint32_t V_STEPS = 40; // phi
 			constexpr uint32_t U_STEPS = 2 * V_STEPS; // theta
 
-			constexpr float V_REPEATS = 4.f;
+			constexpr float V_REPEATS = 1.f;
 			constexpr float U_REPEATS = 2 * V_REPEATS;
 
 			auto emplace_vertex = [&](uint32_t ui, uint32_t vi) {
@@ -371,6 +374,54 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			));
 
 			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+		}
+	}
+
+	{ // load earth textures from image
+		int x = 0, y = 0, c = 0;
+		stbi_set_flip_vertically_on_load(true);
+		uint32_t *tex = (uint32_t *)stbi_load("textures/earth.jpg", &x, &y, &c, 4);
+
+		if (tex) {
+			std::cout << "Image loaded!" << std::endl;
+			textures.emplace_back(rtg.helpers.create_image(
+				VkExtent2D{ .width = (uint32_t)x, .height = (uint32_t)y },
+				VK_FORMAT_R8G8B8A8_SRGB,
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			));
+
+			rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+
+			stbi_image_free(tex);
+		} else {
+			std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
+		}
+	}
+
+	{ // load glitter textures from image
+		int x = 0, y = 0, c = 0;
+		stbi_set_flip_vertically_on_load(false);
+		uint32_t *tex = (uint32_t *)stbi_load("textures/glitter.jpg", &x, &y, &c, 4);
+
+		if (tex) {
+			std::cout << "Image loaded!" << std::endl;
+			textures.emplace_back(rtg.helpers.create_image(
+				VkExtent2D{ .width = (uint32_t)x, .height = (uint32_t)y },
+				VK_FORMAT_R8G8B8A8_SRGB,
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			));
+
+			rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+
+			stbi_image_free(tex);
+		} else {
+			std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
 		}
 	}
 
@@ -832,7 +883,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, 3, 1, 0 ,0);
 		}
 
-		{ // draw w lines pipeline
+		if (false) { // draw w lines pipeline
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
 			{ // use lines_vertices (offset 0) as vert buffer binding 0
 				std::array< VkBuffer, 1 > vertex_buffers{ workspace.lines_vertices.handle };
@@ -952,9 +1003,10 @@ void Tutorial::update(float dt) {
 		world.SKY_ENERGY.g = .1f;
 		world.SKY_ENERGY.b = .2f;
 
-		world.SUN_DIRECTION.x = 6.f / 23.f;
-		world.SUN_DIRECTION.y = 13.f / 23.f;
-		world.SUN_DIRECTION.z = 18.f / 23.f;
+		constexpr float Tilt = 23.5f * float(M_PI) / 180.f;
+		world.SUN_DIRECTION.x = std::sin(time) * std::cos(Tilt);
+		world.SUN_DIRECTION.y = std::cos(time);
+		world.SUN_DIRECTION.z = std::sin(time) * std::sin(Tilt);
 
 		world.SUN_ENERGY.r = 1.f;
 		world.SUN_ENERGY.g = 1.f;
@@ -964,7 +1016,7 @@ void Tutorial::update(float dt) {
 	{ // make cylinder
 		lines_vertices.clear();
 		static size_t max_count = 0;
-		constexpr int lines = 20;
+		constexpr int lines = 0;
 
 		int side_lines = lines;
 		if (side_lines < 0) side_lines = 0;
@@ -1029,7 +1081,7 @@ void Tutorial::update(float dt) {
 	{ // make some objects
 		object_instances.clear();
 
-		{ // plane translated +x by one unit
+		if (false) { // plane translated +x by one unit
 			mat4 WORLD_FROM_LOCAL{
 				1.f, 0.f, 0.f, 0.f,
 				0.f, 1.f, 0.f, 0.f,
@@ -1047,9 +1099,9 @@ void Tutorial::update(float dt) {
 			});
 		}
 
-		constexpr size_t Width = 5;
-		constexpr size_t Height = 5;
-		constexpr size_t Depth = 5;
+		constexpr size_t Width = 1;
+		constexpr size_t Height = 1;
+		constexpr size_t Depth = 1;
 		constexpr float Spacing = 2.f;
 
 		auto emplace_rotating_torus = [&](uint32_t w, uint32_t h, uint32_t d) {
@@ -1073,6 +1125,7 @@ void Tutorial::update(float dt) {
 					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
 					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
 				},
+				.texture = 3,
 			});
 		};
 
@@ -1094,14 +1147,14 @@ void Tutorial::update(float dt) {
 					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
 					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
 				},
-				.texture = 1,
+				.texture = 2,
 			});
 		};
 
 		for (uint32_t w = 0; w < Width; ++w) {
 			for (uint32_t h = 0; h < Height; ++h) {
 				for (uint32_t d = 0; d < Depth; ++d) {
-					emplace_rotating_torus(w, h, d);
+					// emplace_rotating_torus(w, h, d);
 					emplace_sphere(w, h, d);
 				}
 			}
