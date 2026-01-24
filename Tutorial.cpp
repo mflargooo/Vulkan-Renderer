@@ -368,7 +368,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			constexpr uint32_t U_STEPS = 2 * V_STEPS; // theta
 
 			constexpr float V_REPEATS = 1.f;
-			constexpr float U_REPEATS = 2 * V_REPEATS;
+			constexpr float U_REPEATS = 1.f * V_REPEATS;
 
 			auto emplace_vertex = [&](uint32_t ui, uint32_t vi) {
 				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.f * float(M_PI);
