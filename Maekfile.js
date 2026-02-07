@@ -108,6 +108,8 @@ function custom_flags_and_rules() {
 			'/wd4146', //-1U is unsigned
 			`/I${VULKAN_SDK}/Include`,
 			`/I../glfw-3.4.bin.WIN64/include`,
+			`/I/external/s72`,
+			`/I/external/glm/glm`,
 		];
 
 		maek.options.LINKLibs = [
