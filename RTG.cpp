@@ -303,6 +303,21 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 			VK( vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &count, present_modes.data()) );
 		}
 
+		// debug print supported modes
+		if (configuration.debug) {
+			std::cerr << "Supported Surface Formats:";
+			for (auto const &format : formats) {
+				size_t i = &format - &formats[0];
+				std::cerr << "\n  [" << i << "] " << string_VkFormat(format.format);
+			}
+			std::cerr << "\nSupported Present Modes:";
+			for (auto const &mode : present_modes) {
+				size_t i = (&mode - &present_modes[0]);
+				std::cerr << "\n  [" << i << "] " << string_VkPresentModeKHR(mode);
+			}
+			std::cerr << std::endl;
+		}
+
 		// find first available surface format matching config
 		surface_format = [&]() {
 			for(auto const &config_format : configuration.surface_formats) {
