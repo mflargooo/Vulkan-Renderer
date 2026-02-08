@@ -4,3 +4,6 @@
 [submodule "external/glm"]
 	path = external/glm
 	url = https://github.com/g-truc/glm/
+[submodule "external/s72-viewer"]
+	path = external/s72-viewer
+	url = https://github.com/15-472/s72/

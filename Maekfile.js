@@ -33,6 +33,8 @@ const main_objs = [
 	maek.CPP('RTG.cpp'),
 	maek.CPP('Helpers.cpp'),
 	maek.CPP('main.cpp'),
+	maek.CPP('external/s72/s72/S72.cpp'),
+	maek.CPP('external/s72/s72/sejp.cpp'),
 ];
 
 //maek.GLSLC(...) builds a glsl source file:
@@ -108,8 +110,8 @@ function custom_flags_and_rules() {
 			'/wd4146', //-1U is unsigned
 			`/I${VULKAN_SDK}/Include`,
 			`/I../glfw-3.4.bin.WIN64/include`,
-			`/I/external/s72`,
-			`/I/external/glm/glm`,
+			`/I./external/glm`,
+			`/I./external/s72`,
 		];
 
 		maek.options.LINKLibs = [
@@ -120,7 +122,7 @@ function custom_flags_and_rules() {
 			'glfw3.lib',
 			'gdi32.lib',
 			'Shell32.lib',
-			`/MANIFEST:EMBED`, `/MANIFESTINPUT:set-utf8-code-page.manifest`
+			`/MANIFEST:EMBED`, `/MANIFESTINPUT:set-utf8-code-page.manifest`,
 		];
 	
 	} else if (maek.OS === 'macos') {

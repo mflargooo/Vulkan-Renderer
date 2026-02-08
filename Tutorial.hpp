@@ -130,6 +130,8 @@ struct Tutorial : RTG::Application {
 	//static scene resources:
 
 	Helpers::AllocatedBuffer object_vertices;
+	Helpers::AllocatedBuffer scene_vertices;
+	
 	struct ObjectVertices {
 		uint32_t first = 0;
 		uint32_t count = 0;
@@ -183,7 +185,6 @@ struct Tutorial : RTG::Application {
 		float far = 1000.f; // far clip
 	} free_camera;
 	
-
 	mat4 CLIP_FROM_WORLD;
 
 	std::vector< LinesPipeline::Vertex > lines_vertices;
@@ -196,6 +197,8 @@ struct Tutorial : RTG::Application {
 		uint32_t texture = 0;
 	};
 	std::vector< ObjectInstance > object_instances;
+
+	void load_scene(const std::string &file);
 
 	//--------------------------------------------------------------------
 	//Rendering function, uses all the resources above to queue work to draw a frame:

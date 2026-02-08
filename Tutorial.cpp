@@ -10,6 +10,13 @@
 #include <cstring>
 #include <iostream>
 
+// for building the scene
+#include <stack>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <s72/S72.hpp>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb/stb_image.h"
 
@@ -257,7 +264,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
-	{ // create obj vertices
+	{ // create obj vertices -- hard-coded
 		std::vector< PosNorTexVertex > vertices;
 
 		{
@@ -418,6 +425,10 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 		// copy data to buf
 		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
+	}
+
+	{ // Load scene
+		load_scene("./external/s72-viewer/examples/color-check.s72");
 	}
 
 	{ // make some textures
@@ -807,6 +818,101 @@ void Tutorial::destroy_framebuffers() {
 	rtg.helpers.destroy_image(std::move(swapchain_depth_image));
 }
 
+void Tutorial::load_scene(const std::string &file) {
+	std::cerr << "Attempting load scene with filename \'" << file << "\'" << std::endl;
+	
+	// try-catch from print-scene.cpp
+	S72 s72;
+	try {
+		s72 = S72::load(file);
+	} catch (std::exception &e) {
+		std::cerr << "Failed to load s72-format scene from '" << file << "':\n" << e.what() << std::endl;
+	}
+
+	// convert individual mesh data to vertex pool
+	{
+		std::vector < PosNorTexVertex > vertices;
+		
+		for (auto const &mesh : s72.meshes) {
+			if (mesh.second.topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST) {
+				std::cerr << "Skipping mesh " << mesh.second.name << ": unsupported topology." << std::endl;
+				continue;
+			};
+
+			auto it = mesh.second.attributes.find("POSITION");
+			if (it != mesh.second.attributes.end()) {
+				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'POSITION\'." << std::endl; 
+				continue;
+			}
+
+			it = mesh.second.attributes.find("NORMAL");
+			if (it != mesh.second.attributes.end()) {
+				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'NORMAL\'." << std::endl; 
+				continue;
+			}
+
+			it = mesh.second.attributes.find("TANGENT");
+			if (it != mesh.second.attributes.end()) {
+				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'TANGENT\'." << std::endl; 
+				continue;
+			}
+
+			it = mesh.second.attributes.find("TEXCOORD");
+			if (it != mesh.second.attributes.end()) {
+				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'TEXCOORD\'." << std::endl; 
+				continue;
+			}
+		}
+
+		if (vertices.empty()) {
+			std::cerr << "Could not find vertices in scene \'" << file << "\'." << std::endl;
+			return;
+		}
+		
+		size_t bytes = vertices.size() * sizeof(vertices[0]);
+		
+		scene_vertices = rtg.helpers.create_buffer(
+			bytes,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+
+		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, scene_vertices);
+	}
+
+	{ // populate all object instances
+
+
+		{ // dfs through the DAG to populate instances
+			// iteratively compute xf,
+			glm::mat4 xf = glm::mat4(1.0f);
+			
+			// build the frontier from scene roots
+			std::stack< S72::Node *, std::vector< S72::Node * > > frontier(s72.scene.roots);
+			
+			while (!frontier.empty()) {
+				S72::Node *node = frontier.top();
+				frontier.pop();
+
+				// copy current xf to avoid compounding error
+				glm::mat4 xf_ = xf;
+
+				// push children to frontier
+				for (auto child : node->children) {
+					frontier.push(child);
+				}
+
+				xf = xf_ * 
+					glm::translate(glm::mat4(1.0f), glm::vec3(node->translation)) *
+					glm::mat4_cast(node->rotation) *
+					glm::scale(glm::mat4(1.0f), node->scale);
+
+				// handle the node appropriately
+			}
+		}
+	}
+};
 
 void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	//assert that parameters are valid:
