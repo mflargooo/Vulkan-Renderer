@@ -13,6 +13,9 @@ float rand(vec2 co){
 }
 
 void main() {
+    outColor = vec4(0.5);
+    return;
+    
     float STAR_DENSITY = .0001;
     float r = rand(position);
     float thresh = step(r, STAR_DENSITY);

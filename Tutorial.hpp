@@ -2,6 +2,7 @@
 
 #include "PosColVertex.hpp"
 #include "PosNorTexVertex.hpp"
+#include "PosNorTanTexVertex.hpp"
 #include "mat4.hpp"
 
 #include "RTG.hpp"
@@ -89,7 +90,7 @@ struct Tutorial : RTG::Application {
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
-		using Vertex = PosNorTexVertex;
+		using Vertex = PosNorTanTexVertex;
 
 		VkPipeline handle = VK_NULL_HANDLE;
 
@@ -124,13 +125,15 @@ struct Tutorial : RTG::Application {
 		Helpers::AllocatedBuffer Transforms; // device-local
 		VkDescriptorSet Transforms_descriptors; // references Transforms
 	};
-	std::vector< Workspace > workspaces;
+	std::vector< Workspace > workspaces; 
 
 	//-------------------------------------------------------------------
 	//static scene resources:
 
-	Helpers::AllocatedBuffer object_vertices;
-	Helpers::AllocatedBuffer scene_vertices;
+	// Helpers::AllocatedBuffer object_vertices;
+
+	// DataFile path -> buffer holding data obtained from DataFile path
+	std::unordered_map< std::string, Helpers::AllocatedBuffer > scene_vertices;
 	
 	struct ObjectVertices {
 		uint32_t first = 0;
@@ -193,10 +196,13 @@ struct Tutorial : RTG::Application {
 
 	struct ObjectInstance {
 		ObjectVertices vertices;
+		Helpers::AllocatedBuffer *buffer = nullptr;
 		ObjectsPipeline::Transform transform;
 		uint32_t texture = 0;
 	};
 	std::vector< ObjectInstance > object_instances;
+
+	std::unordered_map < Helpers::AllocatedBuffer *, std::vector < ObjectInstance * > > drawables;
 
 	void load_scene(const std::string &file);
 

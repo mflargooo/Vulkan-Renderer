@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include <glm/glm.hpp>
+
 // Note col-major storage order (like in OpenGL / GLSL)
 using mat4 = std::array< float, 16 >;
 static_assert(sizeof(mat4) == 16 * 4, "mat4 is exactly 16 32-bit floats");
@@ -140,4 +142,13 @@ inline mat4 orbit(
         right_z, up_z, out_z, 0.f,
         -right_dot_eye, -up_dot_eye, -out_dot_eye, 1.f
     };
+}
+
+inline mat4 mat4_from_glm(glm::mat4 A) {
+    mat4 B;
+    for (size_t i = 0; i < 4; ++i) {
+        for (size_t j = 0; j < 4; ++j)
+        B[4 * i + j] = A[(glm::mat4::length_type)i][(glm::mat4::length_type)j];
+    }
+    return B;
 }

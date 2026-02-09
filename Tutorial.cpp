@@ -16,6 +16,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <s72/S72.hpp>
+#include <s72/DataStream.hpp>
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb/stb_image.h"
@@ -264,6 +268,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
+	/*
 	{ // create obj vertices -- hard-coded
 		std::vector< PosNorTexVertex > vertices;
 
@@ -426,9 +431,10 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		// copy data to buf
 		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
 	}
+	*/
 
 	{ // Load scene
-		load_scene("./external/s72-viewer/examples/color-check.s72");
+		load_scene("./external/s72-viewer/examples/env-cube.s72");
 	}
 
 	{ // make some textures
@@ -681,7 +687,9 @@ Tutorial::~Tutorial() {
 	}
 	textures.clear();
 
-	rtg.helpers.destroy_buffer(std::move(object_vertices));
+	for (auto &[_, object_vertices] : scene_vertices) {
+		rtg.helpers.destroy_buffer(std::move(object_vertices));
+	}
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
 		destroy_framebuffers();
@@ -818,97 +826,100 @@ void Tutorial::destroy_framebuffers() {
 	rtg.helpers.destroy_image(std::move(swapchain_depth_image));
 }
 
-void Tutorial::load_scene(const std::string &file) {
-	std::cerr << "Attempting load scene with filename \'" << file << "\'" << std::endl;
-	
+void Tutorial::load_scene(const std::string &filename) {
+
 	// try-catch from print-scene.cpp
 	S72 s72;
 	try {
-		s72 = S72::load(file);
+		s72 = S72::load(filename);
 	} catch (std::exception &e) {
-		std::cerr << "Failed to load s72-format scene from '" << file << "':\n" << e.what() << std::endl;
+		std::cerr << "Failed to load s72-format scene from '" << filename << "':\n" << e.what() << std::endl;
 	}
+	std::cerr << "Loaded scene with filename \'" << filename << "\'" << std::endl;
 
-	// convert individual mesh data to vertex pool
-	{
-		std::vector < PosNorTexVertex > vertices;
+	{ // create buffers for each data files
+		for (auto &[src, df] : s72.data_files) {
+			if (scene_vertices.find(df.path) != scene_vertices.end()) { // i don't expect this to ever call
+				std::cerr << "Skipping duplicate src file \'" << src << "\'." << std::endl;
+				continue;
+			}
+
+			auto vertices = VertexStream::load(df.path); // vertex data
+
+			// allocate new buffer
+			Helpers::AllocatedBuffer buffer;
+
+			// upload vertex bytes
+			size_t bytes = vertices.size();
 		
-		for (auto const &mesh : s72.meshes) {
-			if (mesh.second.topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST) {
-				std::cerr << "Skipping mesh " << mesh.second.name << ": unsupported topology." << std::endl;
-				continue;
-			};
+			buffer = rtg.helpers.create_buffer(
+				bytes,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			);
 
-			auto it = mesh.second.attributes.find("POSITION");
-			if (it != mesh.second.attributes.end()) {
-				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'POSITION\'." << std::endl; 
-				continue;
-			}
-
-			it = mesh.second.attributes.find("NORMAL");
-			if (it != mesh.second.attributes.end()) {
-				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'NORMAL\'." << std::endl; 
-				continue;
-			}
-
-			it = mesh.second.attributes.find("TANGENT");
-			if (it != mesh.second.attributes.end()) {
-				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'TANGENT\'." << std::endl; 
-				continue;
-			}
-
-			it = mesh.second.attributes.find("TEXCOORD");
-			if (it != mesh.second.attributes.end()) {
-				std::cerr << "Skipping mesh " << mesh.second.name << ": does not contain attribute \'TEXCOORD\'." << std::endl; 
-				continue;
-			}
+			rtg.helpers.transfer_to_buffer(vertices.data(), bytes, buffer);
+			
+			// track the buffer
+			scene_vertices.insert({df.path, std::move(buffer)});
 		}
-
-		if (vertices.empty()) {
-			std::cerr << "Could not find vertices in scene \'" << file << "\'." << std::endl;
-			return;
-		}
-		
-		size_t bytes = vertices.size() * sizeof(vertices[0]);
-		
-		scene_vertices = rtg.helpers.create_buffer(
-			bytes,
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			Helpers::Unmapped
-		);
-
-		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, scene_vertices);
 	}
 
 	{ // populate all object instances
+		struct Element {
+			S72::Node *node;
+			glm::mat4 xf;
+		};
+		std::stack< Element > frontier;
 
+		// build the frontier from scene roots
+		for (auto &root : s72.scene.roots) {
+			frontier.push(Element{root, glm::mat4(1.0f)});
+		}
+		
+		// dfs through the DAG to populate instances
+		while (!frontier.empty()) {
+			Element elem = frontier.top();
+			frontier.pop();
 
-		{ // dfs through the DAG to populate instances
-			// iteratively compute xf,
-			glm::mat4 xf = glm::mat4(1.0f);
-			
-			// build the frontier from scene roots
-			std::stack< S72::Node *, std::vector< S72::Node * > > frontier(s72.scene.roots);
-			
-			while (!frontier.empty()) {
-				S72::Node *node = frontier.top();
-				frontier.pop();
+			S72::Node *node = elem.node;
+			glm::mat4 xf = elem.xf; // parent space
 
-				// copy current xf to avoid compounding error
-				glm::mat4 xf_ = xf;
+			// transform to local space
+			xf = xf * 
+				glm::translate(glm::mat4(1.0f), glm::vec3(node->translation)) *
+				glm::mat4_cast(node->rotation) *
+				glm::scale(glm::mat4(1.0f), node->scale);
 
-				// push children to frontier
-				for (auto child : node->children) {
-					frontier.push(child);
-				}
+			xf = glm::mat4(1.0f);
 
-				xf = xf_ * 
-					glm::translate(glm::mat4(1.0f), glm::vec3(node->translation)) *
-					glm::mat4_cast(node->rotation) *
-					glm::scale(glm::mat4(1.0f), node->scale);
+			// push children to frontier with this xf as their parent space
+			for (auto child : node->children) {
+				frontier.push(Element{child, xf});
+			}
 
-				// handle the node appropriately
+			xf = xf * glm::scale(glm::mat4(1.0f), glm::vec3(1.f, -1.f, 1.f));
+
+			// handle the node appropriately
+			if (node->mesh) {
+				if (rtg.configuration.debug) std::cerr << "[MESH] " << node->mesh->name << " located at " << glm::to_string(xf) << std::endl; 
+				
+				mat4 imxf = mat4_from_glm(glm::inverse(xf));
+				// create object instance
+				object_instances.emplace_back(ObjectInstance{
+					.vertices = ObjectVertices{
+						.first = 0,
+						.count = node->mesh->count
+					},
+					.buffer = &scene_vertices.at(node->mesh->attributes.at("POSITION").src.path),
+					.transform = ObjectsPipeline::Transform{
+						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * mat4_from_glm(xf),
+						.WORLD_FROM_LOCAL = mat4_from_glm(xf),
+						.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(glm::transpose(glm::inverse(xf))),
+					},
+					.texture = 0,
+				});
 			}
 		}
 	}
@@ -1191,11 +1202,11 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
 		}
 
-		if (!object_instances.empty()) { // draw w objects pipeline
+		for (auto &[object_vertices, instances] : drawables) { // draw w objects pipeline
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
 
 			{ // use object_vertices (offset 0) as vert buf binding 0
-				std::array< VkBuffer, 1 > vertex_buffers{ object_vertices.handle };
+				std::array< VkBuffer, 1 > vertex_buffers{ object_vertices->handle };
 				std::array< VkDeviceSize, 1 > offsets{ 0 };
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
@@ -1218,20 +1229,19 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// cam descriptor set still bound but unused
 
 			// draw all instances
-			for (ObjectInstance const &inst : object_instances) {
-				uint32_t index = uint32_t(&inst - &object_instances[0]);
-
+			for (ObjectInstance const *inst : instances) {
+				uint32_t index = (uint32_t)(inst - &object_instances[0]);
 				// bind texture descriptor set
 				vkCmdBindDescriptorSets(
 					workspace.command_buffer, // cmd buf
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
 					2, // second set
-					1, &texture_descriptors[inst.texture], // descriptor sets count, ptr
+					1, &texture_descriptors[inst->texture], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 
-				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+				vkCmdDraw(workspace.command_buffer, inst->vertices.count, 1, inst->vertices.first, index);
 			}
 		}
 
@@ -1318,7 +1328,7 @@ void Tutorial::update(float dt) {
 		world.SUN_ENERGY.b = .9f;
 	}
 
-	{ // make cylinder
+	if (false) { // make cylinder
 		lines_vertices.clear();
 		static size_t max_count = 0;
 		constexpr int lines = 0;
@@ -1383,7 +1393,7 @@ void Tutorial::update(float dt) {
 		assert(lines_vertices.size() == count);
 	}
 
-	{ // make some objects
+	if (false) { // make some objects
 		object_instances.clear();
 
 		if (false) { // plane translated +x by one unit
@@ -1464,6 +1474,13 @@ void Tutorial::update(float dt) {
 				}
 			}
 		} 
+	}
+
+	{ // compile objects to draw -- objects to be pruned here
+		drawables.clear();
+		for (auto &instance : object_instances) {
+			drawables[instance.buffer].emplace_back(&instance);
+		}
 	}
 }
 

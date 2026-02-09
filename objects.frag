@@ -16,6 +16,9 @@ layout(location = 2) in vec2 texCoord;
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    outColor = vec4(1.f, 0.f, 0.f, 1.f);
+    return;
+    
     vec3 n = normalize(normal);
     vec3 albedo = texture(TEXTURE, texCoord).rgb;
 
