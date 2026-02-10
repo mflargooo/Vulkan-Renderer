@@ -132,9 +132,6 @@ struct Tutorial : RTG::Application {
 
 	// Helpers::AllocatedBuffer object_vertices;
 
-	// DataFile path -> buffer holding data obtained from DataFile path
-	std::unordered_map< std::string, Helpers::AllocatedBuffer > scene_vertices;
-	
 	struct ObjectVertices {
 		uint32_t first = 0;
 		uint32_t count = 0;
@@ -202,7 +199,20 @@ struct Tutorial : RTG::Application {
 	};
 	std::vector< ObjectInstance > object_instances;
 
+	// DataFile path -> buffer holding data obtained from DataFile path
+	std::unordered_map< std::string, Helpers::AllocatedBuffer > scene_vertices;
+	
 	std::unordered_map < Helpers::AllocatedBuffer *, std::vector < ObjectInstance * > > drawables;
+
+	// texture path -> tex_view id
+	std::unordered_map< std::string, uint32_t > tex_ids;
+	
+	struct Material {
+		int albedo_id; // always exists
+		int normal_id; // may not exist
+		int displacement_id; // may not exist
+	};
+	std::unordered_map< std::string, Material > materials;
 
 	int load_scene(const std::string &file);
 

@@ -17,6 +17,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <s72/S72.hpp>
 #include <s72/DataStream.hpp>
+#include <variant>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
@@ -867,6 +868,87 @@ int Tutorial::load_scene(const std::string &filename) {
 		}
 	}
 
+	{ // load textures
+		for (auto &[key, texture] : s72.textures) {
+			if (rtg.configuration.debug) std::cerr << "[TEXTURE] " << texture.src << std::endl;
+			int x = 0, y = 0, c = 0;
+			stbi_set_flip_vertically_on_load(false);
+			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
+
+			if (tex) {
+				VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+				if (texture.format == S72::Texture::Format::linear) {
+					format = VK_FORMAT_R8G8B8A8_UNORM;
+				} 
+
+				// track index of texture
+				tex_ids.insert({ texture.path, (uint32_t)textures.size() });
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{ .width = (uint32_t)x, .height = (uint32_t)y },
+					format,
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+					Helpers::Unmapped
+				));
+
+				rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+
+				stbi_image_free(tex);
+			} else {
+				std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
+			}
+		}
+	}
+
+	{ // load materials
+		for (auto &[key, material] : s72.materials) {
+			if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
+			
+			int albedo_id = -1;
+			int normal_id = -1;
+			int displacement_id = -1;
+
+			// for now we assume lambertian
+			auto p_brdf = std::get_if<S72::Material::Lambertian>(&material.brdf);
+			if (!p_brdf) {
+				std::cerr << "Skipping material \'" << material.name << "\' since it is not Lambertian." << std::endl;
+				continue;
+			}
+			S72::Material::Lambertian lamb = *p_brdf;
+			// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
+			if (auto p_albedo = std::get_if<glm::vec3>(&lamb.albedo)) {
+				glm::vec3 albedo = *p_albedo;
+				// simple monocolor texture
+				uint32_t size = 128;
+				glm::u8vec3 clamped = glm::u8vec3(glm::round(255.f * glm::clamp(albedo, 0.f, 1.f))); // ensure [0, 1] range and convert to [0, 255]
+				std::vector< uint32_t > data(size * size, 0xff000000 | (clamped.z << 16) | (clamped.y << 8) | clamped.x);
+				assert(data.size() == size * size);
+
+				albedo_id = (int)textures.size();
+				// make place for tex to live on GPU
+				textures.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{ .width = size, .height = size }, // size of img
+					VK_FORMAT_R8G8B8A8_UNORM, // how to interpret image data
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+					Helpers::Unmapped
+				));
+
+				// transfer data
+				rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+			} else if (auto p_texture = std::get_if<S72::Texture *>(&lamb.albedo)) {
+				albedo_id = (int)tex_ids[(*p_texture)->path];
+			}
+
+			if (material.normal_map) normal_id = (int)tex_ids[material.normal_map->path];	
+			if (material.displacement_map) displacement_id = (int)tex_ids[material.displacement_map->path];
+
+			materials.insert({ material.name, Material{ .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id } });
+		}
+	}
+
 	{ // populate all object instances
 		struct Element {
 			S72::Node *node;
@@ -876,7 +958,7 @@ int Tutorial::load_scene(const std::string &filename) {
 
 		// build the frontier from scene roots
 		for (auto &root : s72.scene.roots) {
-			frontier.push(Element{root, glm::mat4(1.0f)});
+			frontier.push(Element{root, glm::mat4(1.f)});
 		}
 		
 		// dfs through the DAG to populate instances
@@ -885,10 +967,8 @@ int Tutorial::load_scene(const std::string &filename) {
 			frontier.pop();
 
 			S72::Node *node = elem.node;
-			glm::mat4 xf = elem.xf; // parent space
-
-			// transform to local space
-			xf = xf * 
+			// transform parent space to local
+			glm::mat4 xf = elem.xf * 
 				glm::translate(glm::mat4(1.0f), glm::vec3(node->translation)) *
 				glm::mat4_cast(node->rotation) *
 				glm::scale(glm::mat4(1.0f), node->scale);
@@ -902,6 +982,10 @@ int Tutorial::load_scene(const std::string &filename) {
 			if (node->mesh) {
 				if (rtg.configuration.debug) std::cerr << "[MESH] " << node->mesh->name << " located at " << glm::to_string(xf) << std::endl; 
 				
+				Material material{ .albedo_id = 0 };
+				if (node->mesh->material) {
+					material = materials[node->mesh->material->name];
+				}
 				// create object instance
 				object_instances.emplace_back(ObjectInstance{
 					.vertices{
@@ -914,7 +998,7 @@ int Tutorial::load_scene(const std::string &filename) {
 						.WORLD_FROM_LOCAL = mat4_from_glm(xf),
 						.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(xf),
 					},
-					.texture = 0,
+					.texture = uint32_t(material.albedo_id),
 				});
 			}
 		}
