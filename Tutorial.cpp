@@ -267,9 +267,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			);
 		}
 	}
-
 	/*
-	{ // create obj vertices -- hard-coded
+	if (false) { // create obj vertices -- hard-coded
 		std::vector< PosNorTexVertex > vertices;
 
 		{
@@ -432,9 +431,8 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
 	}
 	*/
-
 	{ // Load scene
-		load_scene("./external/s72-viewer/examples/env-cube.s72");
+		load_scene("C:/Users/socce/OneDrive/Desktop/HW/Senior/Sem 2/15472/nakluV/external/s72-viewer/examples/color-check.s72");
 	}
 
 	{ // make some textures
@@ -497,7 +495,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
-	{ // load earth textures from image
+	if (false) { // load earth textures from image
 		int x = 0, y = 0, c = 0;
 		stbi_set_flip_vertically_on_load(true);
 		uint32_t *tex = (uint32_t *)stbi_load("textures/earth.jpg", &x, &y, &c, 4);
@@ -521,7 +519,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
-	{ // load glitter textures from image
+	if (false) { // load glitter textures from image
 		int x = 0, y = 0, c = 0;
 		stbi_set_flip_vertically_on_load(false);
 		uint32_t *tex = (uint32_t *)stbi_load("textures/glitter.jpg", &x, &y, &c, 4);
@@ -690,6 +688,7 @@ Tutorial::~Tutorial() {
 	for (auto &[_, object_vertices] : scene_vertices) {
 		rtg.helpers.destroy_buffer(std::move(object_vertices));
 	}
+	scene_vertices.clear();
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
 		destroy_framebuffers();
@@ -892,31 +891,26 @@ void Tutorial::load_scene(const std::string &filename) {
 				glm::mat4_cast(node->rotation) *
 				glm::scale(glm::mat4(1.0f), node->scale);
 
-			xf = glm::mat4(1.0f);
-
 			// push children to frontier with this xf as their parent space
 			for (auto child : node->children) {
 				frontier.push(Element{child, xf});
 			}
 
-			xf = xf * glm::scale(glm::mat4(1.0f), glm::vec3(1.f, -1.f, 1.f));
-
 			// handle the node appropriately
 			if (node->mesh) {
 				if (rtg.configuration.debug) std::cerr << "[MESH] " << node->mesh->name << " located at " << glm::to_string(xf) << std::endl; 
 				
-				mat4 imxf = mat4_from_glm(glm::inverse(xf));
 				// create object instance
 				object_instances.emplace_back(ObjectInstance{
-					.vertices = ObjectVertices{
+					.vertices{
 						.first = 0,
 						.count = node->mesh->count
 					},
 					.buffer = &scene_vertices.at(node->mesh->attributes.at("POSITION").src.path),
-					.transform = ObjectsPipeline::Transform{
-						.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * mat4_from_glm(xf),
+					.transform{
+						/* .CLIP_FROM_LOCAL = mat4_from_glm(glm::mat4(1.f)), -- filled by update */
 						.WORLD_FROM_LOCAL = mat4_from_glm(xf),
-						.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(glm::transpose(glm::inverse(xf))),
+						.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(xf),
 					},
 					.texture = 0,
 				});
@@ -1231,6 +1225,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// draw all instances
 			for (ObjectInstance const *inst : instances) {
 				uint32_t index = (uint32_t)(inst - &object_instances[0]);
+				
 				// bind texture descriptor set
 				vkCmdBindDescriptorSets(
 					workspace.command_buffer, // cmd buf
@@ -1310,22 +1305,21 @@ void Tutorial::update(float dt) {
 	}
 
 	{ // static sun and sky
-		world.SKY_DIRECTION.x = 0.f;
-		world.SKY_DIRECTION.y = 0.f;
-		world.SKY_DIRECTION.z = 1.f;
+		world.SKY_DIRECTION.x = 0.0f;
+		world.SKY_DIRECTION.y = 0.0f;
+		world.SKY_DIRECTION.z = 1.0f;
 
-		world.SKY_ENERGY.r = .1f;
-		world.SKY_ENERGY.g = .1f;
-		world.SKY_ENERGY.b = .2f;
+		world.SKY_ENERGY.r = 0.1f;
+		world.SKY_ENERGY.g = 0.1f;
+		world.SKY_ENERGY.b = 0.2f;
 
-		constexpr float Tilt = 23.5f * float(M_PI) / 180.f;
-		world.SUN_DIRECTION.x = std::sin(time) * std::cos(Tilt);
-		world.SUN_DIRECTION.y = std::cos(time);
-		world.SUN_DIRECTION.z = std::sin(time) * std::sin(Tilt);
+		world.SUN_DIRECTION.x = 6.0f / 23.0f;
+		world.SUN_DIRECTION.y = 13.0f / 23.0f;
+		world.SUN_DIRECTION.z = 18.0f / 23.0f;
 
-		world.SUN_ENERGY.r = 1.f;
-		world.SUN_ENERGY.g = 1.f;
-		world.SUN_ENERGY.b = .9f;
+		world.SUN_ENERGY.r = 1.0f;
+		world.SUN_ENERGY.g = 1.0f;
+		world.SUN_ENERGY.b = 0.9f;
 	}
 
 	if (false) { // make cylinder
@@ -1479,6 +1473,7 @@ void Tutorial::update(float dt) {
 	{ // compile objects to draw -- objects to be pruned here
 		drawables.clear();
 		for (auto &instance : object_instances) {
+			instance.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * instance.transform.WORLD_FROM_LOCAL;
 			drawables[instance.buffer].emplace_back(&instance);
 		}
 	}
