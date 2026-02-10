@@ -172,7 +172,8 @@ struct Tutorial : RTG::Application {
 	enum class CameraMode {
 		Scene = 0,
 		Free = 1,
-	} camera_mode = CameraMode::Free;
+		Debug = 2,
+	} camera_mode = CameraMode(rtg.configuration.camera.compare("") == 0);
 
 	struct OrbitCamera { // used when camera_mode == CameraMode::Free
 		float target_x = 0.f, target_y = 0.f, target_z = 0.f; // cam looking + orbiting
@@ -183,7 +184,18 @@ struct Tutorial : RTG::Application {
 		float fov = 60.f / 180.f * float(M_PI); // vfov (rad)
 		float near = .1f; // near clip
 		float far = 1000.f; // far clip
-	} free_camera;
+	} user_cameras[2]; // free camera at 0; debug at [1]
+
+	struct Camera {
+		ObjectsPipeline::Transform transform;
+		float aspect;
+		float vfov;
+		float near;
+		float far;
+	};
+	std::unordered_map< std::string, Camera > scene_cameras;
+	std::unordered_map< std::string, Camera >::iterator selected_scene_camera;
+	size_t selected_user_camera = 0;
 	
 	mat4 CLIP_FROM_WORLD;
 

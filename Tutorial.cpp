@@ -968,8 +968,8 @@ int Tutorial::load_scene(const std::string &filename) {
 
 			S72::Node *node = elem.node;
 			// transform parent space to local
-			glm::mat4 xf = elem.xf * 
-				glm::translate(glm::mat4(1.0f), glm::vec3(node->translation)) *
+			glm::mat4 xf = elem.xf *
+				glm::translate(glm::mat4(1.0f), node->translation) *
 				glm::mat4_cast(node->rotation) *
 				glm::scale(glm::mat4(1.0f), node->scale);
 
@@ -996,12 +996,33 @@ int Tutorial::load_scene(const std::string &filename) {
 					.transform{
 						/* .CLIP_FROM_LOCAL = mat4_from_glm(glm::mat4(1.f)), -- filled by update */
 						.WORLD_FROM_LOCAL = mat4_from_glm(xf),
-						.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(xf),
+						.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(glm::transpose(glm::inverse(xf))),
 					},
 					.texture = uint32_t(material.albedo_id),
 				});
+			} else if (node->camera) {
+				if (rtg.configuration.debug) std::cerr << "[CAMERA] " << node->camera->name << " located at " << glm::to_string(xf) << std::endl; 
+				if (auto p_proj = std::get_if<S72::Camera::Perspective>(&node->camera->projection)) {
+					scene_cameras.insert({ node->camera->name, {
+						.transform = mat4_from_glm(xf),
+						.aspect = p_proj->aspect,
+						.vfov = p_proj->vfov,
+						.near = p_proj->near,
+						.far = p_proj->far,
+					} });
+				}
 			}
 		}
+	}
+
+	if (rtg.configuration.camera.compare("")) { // select correct scene camera, if exists
+		auto it = scene_cameras.find(rtg.configuration.camera);
+		if (it == scene_cameras.end()) {
+			std::cerr << "Scene camera " << rtg.configuration.camera << " does not exist! Exiting";
+			exit(1);
+		}
+
+		selected_scene_camera = it;
 	}
 	return 0;
 };
@@ -1310,7 +1331,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// cam descriptor set still bound but unused
 
 			// draw all instances
-			for (ObjectInstance const *inst : instances) {
+			for (auto &inst : instances) {
 				uint32_t index = (uint32_t)(inst - &object_instances[0]);
 				
 				// bind texture descriptor set
@@ -1366,18 +1387,19 @@ void Tutorial::update(float dt) {
 
 	if (camera_mode == CameraMode::Scene) {
 		 //camera rotating around the origin:
-		float ang = float(M_PI) * 2.0f * 10.0f * (time / 60.0f);
+		auto scene_camera = selected_scene_camera->second;
 		CLIP_FROM_WORLD = perspective(
-			60.0f * float(M_PI) / 180.0f, //vfov
-			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
-			0.1f, //near
-			1000.0f //far
-		) * look_at(
-			10.0f * std::cos(ang), 10.0f * std::sin(ang), 1.0f, //eye
-			0.0f, 0.0f, 0.5f, //target
-			0.0f, 0.0f, 1.0f //up
+			scene_camera.vfov, //vfov
+			scene_camera.aspect, // rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
+			scene_camera.near, //near
+			scene_camera.far //far
+		) * look_at (
+			scene_camera.transform.WORLD_FROM_LOCAL[9], scene_camera.transform.WORLD_FROM_LOCAL[10], scene_camera.transform.WORLD_FROM_LOCAL[11],
+			-scene_camera.transform.WORLD_FROM_LOCAL[5], -scene_camera.transform.WORLD_FROM_LOCAL[6], -scene_camera.transform.WORLD_FROM_LOCAL[7],
+			scene_camera.transform.WORLD_FROM_LOCAL[1], scene_camera.transform.WORLD_FROM_LOCAL[2], scene_camera.transform.WORLD_FROM_LOCAL[3]
 		);
-	} else if (camera_mode == CameraMode::Free) {
+	} else if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
+		OrbitCamera &free_camera = user_cameras[selected_user_camera];
 		CLIP_FROM_WORLD = perspective(
 			free_camera.fov,
 			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), // aspect
@@ -1388,7 +1410,7 @@ void Tutorial::update(float dt) {
 			free_camera.azimuth, free_camera.elevation, free_camera.radius
 		);
 	} else {
-		assert(0 && "only two camera modes");
+		assert(0 && "only three camera modes");
 	}
 
 	{ // static sun and sky
@@ -1559,9 +1581,9 @@ void Tutorial::update(float dt) {
 
 	{ // compile objects to draw -- objects to be pruned here
 		drawables.clear();
-		for (auto &instance : object_instances) {
-			instance.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * instance.transform.WORLD_FROM_LOCAL;
-			drawables[instance.buffer].emplace_back(&instance);
+		for (auto &inst : object_instances) {
+			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;
+			drawables[inst.buffer].emplace_back(&inst);
 		}
 	}
 }
@@ -1577,12 +1599,16 @@ void Tutorial::on_input(InputEvent const &evt) {
 	// general ctrls
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
 		// switch cam modes
-		camera_mode = CameraMode((int(camera_mode) + 1) % 2);
+		int dir = (evt.key.mods & GLFW_MOD_SHIFT) ? -1 : 1;
+		camera_mode = CameraMode((int(camera_mode) + dir + 3) % 3);
+		selected_user_camera = camera_mode == CameraMode::Scene ? 0 : int(camera_mode) - 1;
 		return;
 	}
 
 	// free cam ctrls
-	if (camera_mode == CameraMode::Free) {
+	if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
+		OrbitCamera &free_camera = user_cameras[selected_user_camera];
+		
 		if (evt.type == InputEvent::MouseWheel) {
 			// change dist by 10% every scroll click
 			free_camera.radius *= std::exp(std::log(1.1f) * -evt.wheel.y);
@@ -1597,9 +1623,9 @@ void Tutorial::on_input(InputEvent const &evt) {
 			// start panning
 			float init_x = evt.button.x;
 			float init_y = evt.button.y;
-			OrbitCamera init_camera = free_camera;
+			OrbitCamera init_camera = user_cameras[selected_user_camera];
 
-			action = [this,init_x,init_y,init_camera](InputEvent const &evt) {
+			action = [this,init_x,init_y,init_camera,&free_camera](InputEvent const &evt) {
 				if (evt.type == InputEvent::MouseButtonUp && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
 					// cancel
 					action = nullptr;
@@ -1633,9 +1659,9 @@ void Tutorial::on_input(InputEvent const &evt) {
 
 			float init_x = evt.button.x;
 			float init_y = evt.button.y;
-			OrbitCamera init_camera = free_camera;
+			OrbitCamera init_camera = user_cameras[selected_user_camera];
 
-			action = [this,init_x,init_y,init_camera](InputEvent const &evt) {
+			action = [this,init_x,init_y,init_camera,&free_camera](InputEvent const &evt) {
 				if (evt.type == InputEvent::MouseButtonUp && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
 					// cancel upon button lifted
 					action = nullptr;
