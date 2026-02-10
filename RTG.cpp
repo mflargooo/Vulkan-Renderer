@@ -46,6 +46,12 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			surface_extent.height = conv("height");
 		} else if (arg == "--headless") {
 			headless = true;
+		} else if (arg == "--scene") {
+			argi += 1;
+			scene = argv[argi];
+		} else if (arg == "--camera") {
+			argi += 1;
+			camera = argv[argi];
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}

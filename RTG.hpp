@@ -77,6 +77,12 @@ struct RTG {
 		// run w/o a window, read events from stdin
 		bool headless = false;
 
+		// scene to render init
+		std::string scene = ""; 
+
+		// camera to start on
+		std::string camera = "";
+
 		//for configuration construction + management:
 		Configuration() = default;
 		void parse(int argc, char **argv); //parse command-line options; throws on error

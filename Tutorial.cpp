@@ -431,8 +431,9 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
 	}
 	*/
-	{ // Load scene
-		load_scene("C:/Users/socce/OneDrive/Desktop/HW/Senior/Sem 2/15472/nakluV/external/s72-viewer/examples/color-check.s72");
+
+	if (rtg.configuration.scene.compare("")) { // Load scene
+		load_scene(rtg.configuration.scene);
 	}
 
 	{ // make some textures
@@ -825,7 +826,7 @@ void Tutorial::destroy_framebuffers() {
 	rtg.helpers.destroy_image(std::move(swapchain_depth_image));
 }
 
-void Tutorial::load_scene(const std::string &filename) {
+int Tutorial::load_scene(const std::string &filename) {
 
 	// try-catch from print-scene.cpp
 	S72 s72;
@@ -833,6 +834,7 @@ void Tutorial::load_scene(const std::string &filename) {
 		s72 = S72::load(filename);
 	} catch (std::exception &e) {
 		std::cerr << "Failed to load s72-format scene from '" << filename << "':\n" << e.what() << std::endl;
+		return -1;
 	}
 	std::cerr << "Loaded scene with filename \'" << filename << "\'" << std::endl;
 
@@ -917,6 +919,7 @@ void Tutorial::load_scene(const std::string &filename) {
 			}
 		}
 	}
+	return 0;
 };
 
 void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {

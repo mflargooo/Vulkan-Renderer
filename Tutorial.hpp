@@ -204,7 +204,7 @@ struct Tutorial : RTG::Application {
 
 	std::unordered_map < Helpers::AllocatedBuffer *, std::vector < ObjectInstance * > > drawables;
 
-	void load_scene(const std::string &file);
+	int load_scene(const std::string &file);
 
 	//--------------------------------------------------------------------
 	//Rendering function, uses all the resources above to queue work to draw a frame:
