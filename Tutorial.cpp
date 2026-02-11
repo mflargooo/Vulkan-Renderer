@@ -19,6 +19,7 @@
 #include <s72/S72.hpp>
 #include <s72/DataStream.hpp>
 #include <variant>
+#include <limits>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
@@ -269,174 +270,6 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			);
 		}
 	}
-	/*
-	if (false) { // create obj vertices -- hard-coded
-		std::vector< PosNorTexVertex > vertices;
-
-		{
-			plane_vertices.first = uint32_t(vertices.size());
-			// [-1,1]x[-1,1]x{0} quad
-			vertices.emplace_back(PosNorTexVertex{
-				.Position{ .x = -1.f, .y = -1.f, .z = 0.f },
-				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
-				.TexCoord{ .s = 0.f, .t = 0.f },
-			});
-			vertices.emplace_back(PosNorTexVertex{
-				.Position{ .x = 1.f, .y = -1.f, .z = 0.f },
-				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
-				.TexCoord{ .s = 1.f, .t = 0.f },
-			});
-			vertices.emplace_back(PosNorTexVertex{
-				.Position{ .x = -1.f, .y = 1.f, .z = 0.f },
-				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
-				.TexCoord{ .s = 0.f, .t = 1.f },
-			});
-			vertices.emplace_back(PosNorTexVertex{
-				.Position{ .x = 1.f, .y = 1.f, .z = 0.f },
-				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
-				.TexCoord{ .s = 1.f, .t = 1.f },
-			});
-			vertices.emplace_back(PosNorTexVertex{
-				.Position{ .x = -1.f, .y = 1.f, .z = 0.f },
-				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
-				.TexCoord{ .s = 0.f, .t = 1.f },
-			});
-			vertices.emplace_back(PosNorTexVertex{
-				.Position{ .x = 1.f, .y = -1.f, .z = 0.f },
-				.Normal{ .x = 0.f, .y = 0.f, .z = 1.f },
-				.TexCoord{ .s = 1.f, .t = 0.f },
-			});
-
-			plane_vertices.count = uint32_t(vertices.size() - plane_vertices.first);
-		}
-
-		constexpr float Scale = 10.f;
-		{
-			torus_vertices.first = uint32_t(vertices.size());
-
-			// (u, v) parameterization with
-			// - u is angle around main axis (+z)
-			// - v is angle around tube
-
-			constexpr float R1 = .075f * Scale; // main radius
-			constexpr float R2 = .015f * Scale; // tube radius
-
-			constexpr uint32_t U_STEPS = 20;
-			constexpr uint32_t V_STEPS = 16;
-
-			// texture repeats around torus
-			constexpr float V_REPEATS = 1.f;
-			constexpr float U_REPEATS = int(V_REPEATS / R2 * R1 + .999f); // approx sqr rounded up
-
-			auto emplace_vertex = [&](uint32_t ui, uint32_t vi) {
-				// convert steps to angles
-				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.f * float (M_PI);
-				float va = (vi % V_STEPS) / float(V_STEPS) * 2.f * float (M_PI);
-
-				vertices.emplace_back( PosNorTexVertex{
-					.Position {
-						.x = (R1 + R2 * std::cos(va)) * std::cos(ua),
-						.y = (R1 + R2 * std::cos(va)) * std::sin(ua),
-						.z = R2 * std::sin(va),
-					},
-					.Normal {
-						.x = std::cos(va) * std::cos(ua),
-						.y = std::cos(va) * std::sin(ua),
-						.z = std::sin(va),
-					},
-					.TexCoord {
-						.s = ui / float(U_STEPS) * U_REPEATS,
-						.t = vi / float(V_STEPS) * V_REPEATS,
-					},
-				});
-			};
-
-			for (uint32_t ui = 0; ui < U_STEPS; ++ui) {
-				for (uint32_t vi = 0; vi < V_STEPS; ++vi) {
-					emplace_vertex(ui, vi);
-					emplace_vertex(ui+1, vi);
-					emplace_vertex(ui, vi+1);
-
-					emplace_vertex(ui, vi+1);
-					emplace_vertex(ui+1, vi);
-					emplace_vertex(ui+1, vi+1);
-
-				}
-			}
-
-			torus_vertices.count = uint32_t(vertices.size() - torus_vertices.first);
-		}
-
-		{
-			sphere_vertices.first = uint32_t(vertices.size());
-
-			constexpr float A = .025f * Scale;
-			constexpr float B = .025f * Scale;
-			constexpr float C = .025f * Scale;
-			constexpr float C_x = 0.f;
-			constexpr float C_y = 0.f;
-			constexpr float C_z = 0.f;
-
-			constexpr uint32_t V_STEPS = 40; // phi
-			constexpr uint32_t U_STEPS = 2 * V_STEPS; // theta
-
-			constexpr float V_REPEATS = 1.f;
-			constexpr float U_REPEATS = 1.f * V_REPEATS;
-
-			auto emplace_vertex = [&](uint32_t ui, uint32_t vi) {
-				float ua = (ui % U_STEPS) / float(U_STEPS) * 2.f * float(M_PI);
-				float va = (vi % V_STEPS) / float(V_STEPS) * float(M_PI) * 2.f;
-
-				vertices.emplace_back( PosNorTexVertex{
-					.Position {
-						.x = A * std::sin(va) * std::cos(ua) + C_x,
-						.y = B * std::sin(va) * std::sin(ua) + C_y,
-						.z = C * std::cos(va) + C_z,
-					},
-					.Normal {
-						.x = std::sin(va) * std::cos(ua),
-						.y = std::sin(va) * std::sin(ua),
-						.z = std::cos(va),
-					},
-					.TexCoord {
-						.s = ui / float(U_STEPS) * U_REPEATS,
-						.t = vi / float(V_STEPS) * V_REPEATS,
-					},
-				});
-			};
-
-			for (uint32_t ui = 0; ui < U_STEPS; ++ui) {
-				for (uint32_t vi = 0; vi < V_STEPS; ++vi) {
-					emplace_vertex(ui, vi);
-					emplace_vertex(ui+1, vi);
-					emplace_vertex(ui, vi+1);
-
-					emplace_vertex(ui, vi+1);
-					emplace_vertex(ui+1, vi);
-					emplace_vertex(ui+1, vi+1);
-				}
-			}
-
-			sphere_vertices.count = uint32_t(vertices.size() - sphere_vertices.first);
-		}
-
-		size_t bytes = vertices.size() * sizeof(vertices[0]);
-
-		object_vertices = rtg.helpers.create_buffer(
-			bytes,
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			Helpers::Unmapped
-		);
-
-		// copy data to buf
-		rtg.helpers.transfer_to_buffer(vertices.data(), bytes, object_vertices);
-	}
-	*/
-
-	if (rtg.configuration.scene.compare("")) { // Load scene
-		load_scene(rtg.configuration.scene);
-	}
 
 	{ // make some textures
 		{ // tex 0 is dark / light grey checker with red origin
@@ -498,52 +331,26 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
-	if (false) { // load earth textures from image
-		int x = 0, y = 0, c = 0;
-		stbi_set_flip_vertically_on_load(true);
-		uint32_t *tex = (uint32_t *)stbi_load("textures/earth.jpg", &x, &y, &c, 4);
+	{ // static sun and sky
+		world.SKY_DIRECTION.x = 0.0f;
+		world.SKY_DIRECTION.y = 0.0f;
+		world.SKY_DIRECTION.z = 1.0f;
 
-		if (tex) {
-			std::cout << "Image loaded!" << std::endl;
-			textures.emplace_back(rtg.helpers.create_image(
-				VkExtent2D{ .width = (uint32_t)x, .height = (uint32_t)y },
-				VK_FORMAT_R8G8B8A8_SRGB,
-				VK_IMAGE_TILING_OPTIMAL,
-				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				Helpers::Unmapped
-			));
+		world.SKY_ENERGY.r = 0.1f;
+		world.SKY_ENERGY.g = 0.1f;
+		world.SKY_ENERGY.b = 0.2f;
 
-			rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+		world.SUN_DIRECTION.x = 6.0f / 23.0f;
+		world.SUN_DIRECTION.y = 13.0f / 23.0f;
+		world.SUN_DIRECTION.z = 18.0f / 23.0f;
 
-			stbi_image_free(tex);
-		} else {
-			std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
-		}
+		world.SUN_ENERGY.r = 1.0f;
+		world.SUN_ENERGY.g = 1.0f;
+		world.SUN_ENERGY.b = 0.9f;
 	}
-
-	if (false) { // load glitter textures from image
-		int x = 0, y = 0, c = 0;
-		stbi_set_flip_vertically_on_load(false);
-		uint32_t *tex = (uint32_t *)stbi_load("textures/glitter.jpg", &x, &y, &c, 4);
-
-		if (tex) {
-			std::cout << "Image loaded!" << std::endl;
-			textures.emplace_back(rtg.helpers.create_image(
-				VkExtent2D{ .width = (uint32_t)x, .height = (uint32_t)y },
-				VK_FORMAT_R8G8B8A8_SRGB,
-				VK_IMAGE_TILING_OPTIMAL,
-				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				Helpers::Unmapped
-			));
-
-			rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
-
-			stbi_image_free(tex);
-		} else {
-			std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
-		}
+	
+	if (rtg.configuration.scene.compare("")) { // Load scene
+		load_scene(rtg.configuration.scene);
 	}
 
 	{ // make image views for the textures
@@ -691,6 +498,7 @@ Tutorial::~Tutorial() {
 	for (auto &[_, object_vertices] : scene_vertices) {
 		rtg.helpers.destroy_buffer(std::move(object_vertices));
 	}
+
 	scene_vertices.clear();
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
@@ -847,7 +655,7 @@ int Tutorial::load_scene(const std::string &filename) {
 				continue;
 			}
 
-			auto vertices = VertexStream::load(df.path); // vertex data
+			std::vector< char > vertices = VertexStream::load(df.path); // vertex data
 
 			// allocate new buffer
 			Helpers::AllocatedBuffer buffer;
@@ -869,6 +677,26 @@ int Tutorial::load_scene(const std::string &filename) {
 		}
 	}
 
+	{ // create AABBs
+		for (auto &[_, mesh] : s72.meshes) {
+			PosNorTanTexVertex *vertices = (PosNorTanTexVertex *)VertexStream::load(mesh.attributes.at("POSITION").src.path).data(); // vertex data
+
+			auto &buffer = scene_vertices[mesh.attributes.at("POSITION").src.path];
+			AABB aabb = AABB{
+				.min = glm::vec3(std::numeric_limits<float>::max()),
+				.max = glm::vec3(std::numeric_limits<float>::min()),
+			};
+			for (size_t i = 0; i < mesh.count; ++i) {
+				glm::vec3 pos = vertices[i].Position;
+				aabb.min = glm::min(aabb.min, pos);
+				aabb.max = glm::max(aabb.max, pos);
+			}
+
+			// for now, index by buffer, later by mesh
+			aabbs.insert({ &buffer, std::move(aabb) });
+		}
+	}
+
 	{ // load textures
 		for (auto &[key, texture] : s72.textures) {
 			if (rtg.configuration.debug) std::cerr << "[TEXTURE] " << texture.src << std::endl;
@@ -880,7 +708,7 @@ int Tutorial::load_scene(const std::string &filename) {
 				VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
 				if (texture.format == S72::Texture::Format::linear) {
 					format = VK_FORMAT_R8G8B8A8_UNORM;
-				} 
+				}
 
 				// track index of texture
 				tex_ids.insert({ texture.path, (uint32_t)textures.size() });
@@ -919,11 +747,10 @@ int Tutorial::load_scene(const std::string &filename) {
 			S72::Material::Lambertian lamb = *p_brdf;
 			// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
 			if (auto p_albedo = std::get_if<glm::vec3>(&lamb.albedo)) {
-				glm::vec3 albedo = *p_albedo;
+				glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
 				// simple monocolor texture
 				uint32_t size = 128;
-				glm::u8vec3 clamped = glm::u8vec3(glm::round(255.f * glm::clamp(albedo, 0.f, 1.f))); // ensure [0, 1] range and convert to [0, 255]
-				std::vector< uint32_t > data(size * size, 0xff000000 | (clamped.z << 16) | (clamped.y << 8) | clamped.x);
+				std::vector< glm::u8vec4 > data(size * size, albedo);
 				assert(data.size() == size * size);
 
 				albedo_id = (int)textures.size();
@@ -1013,6 +840,18 @@ int Tutorial::load_scene(const std::string &filename) {
 						.near = p_proj->near,
 						.far = p_proj->far,
 					};
+				}
+			} else if (node->light) {
+				if (auto p_sun = std::get_if< S72::Light::Sun >(&node->light->source)) {
+					glm::vec3 direction = glm::normalize(glm::vec3(xf * glm::vec4(0.f, 0.f, 1.f, 0.f)));
+					
+					if (node->light->name == "Sun") {
+						world.SUN_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
+						world.SUN_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
+					} else if (node->light->name == "Sky") {
+						world.SKY_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
+						world.SKY_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
+					}
 				}
 			}
 		}
@@ -1254,13 +1093,13 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		if (swap_aspect > camera_aspect) { // set scissor rect
 			width = rtg.swapchain_extent.width * (camera_aspect / swap_aspect);
 			height = float(rtg.swapchain_extent.height);
-			x = (rtg.swapchain_extent.width - width) * .5f;
+			x = ((float)rtg.swapchain_extent.width - width) * .5f;
 			y = 0.f;
 		} else {
 			width = float(rtg.swapchain_extent.width);
 			height = rtg.swapchain_extent.height * (swap_aspect / camera_aspect);
 			x = 0.f;
-		 	y = (rtg.swapchain_extent.height - height) * .5f;
+		 	y = ((float)rtg.swapchain_extent.height - height) * .5f;
 		}
 
 		{
@@ -1296,7 +1135,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, 3, 1, 0 ,0);
 		}
 
-		if (false) { // draw w lines pipeline
+		if (camera_mode == CameraMode::Debug) { // draw w lines pipeline
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
 			{ // use lines_vertices (offset 0) as vert buffer binding 0
 				std::array< VkBuffer, 1 > vertex_buffers{ workspace.lines_vertices.handle };
@@ -1413,184 +1252,18 @@ void Tutorial::update(float dt) {
 			scene_camera.far //far
 		) * mat4_from_glm(glm::inverse(glm::make_mat4(scene_camera.transform.WORLD_FROM_LOCAL.data())));
 	} else if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
-		OrbitCamera &free_camera = user_cameras[selected_user_camera];
+		OrbitCamera &user_camera = camera_mode == CameraMode::Free ? free_camera : debug_camera;
 		CLIP_FROM_WORLD = perspective(
-			free_camera.fov,
-			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), // aspect
-			free_camera.near,
-			free_camera.far
+			user_camera.fov,
+			1.7778f, // aspect
+			user_camera.near,
+			user_camera.far
 		) * orbit(
-			free_camera.target_x, free_camera.target_y, free_camera.target_z,
-			free_camera.azimuth, free_camera.elevation, free_camera.radius
+			user_camera.target_x, user_camera.target_y, user_camera.target_z,
+			user_camera.azimuth, user_camera.elevation, user_camera.radius
 		);
 	} else {
 		assert(0 && "only three camera modes");
-	}
-
-	{ // static sun and sky
-		world.SKY_DIRECTION.x = 0.0f;
-		world.SKY_DIRECTION.y = 0.0f;
-		world.SKY_DIRECTION.z = 1.0f;
-
-		world.SKY_ENERGY.r = 0.1f;
-		world.SKY_ENERGY.g = 0.1f;
-		world.SKY_ENERGY.b = 0.2f;
-
-		world.SUN_DIRECTION.x = 6.0f / 23.0f;
-		world.SUN_DIRECTION.y = 13.0f / 23.0f;
-		world.SUN_DIRECTION.z = 18.0f / 23.0f;
-
-		world.SUN_ENERGY.r = 1.0f;
-		world.SUN_ENERGY.g = 1.0f;
-		world.SUN_ENERGY.b = 0.9f;
-	}
-
-	if (false) { // make cylinder
-		lines_vertices.clear();
-		static size_t max_count = 0;
-		constexpr int lines = 0;
-
-		int side_lines = lines;
-		if (side_lines < 0) side_lines = 0;
-
-		int face_lines = 2 * lines;
-		if (face_lines < 0) face_lines = 0;
-
-		size_t count = size_t(2 * side_lines + 2 * face_lines * 2);
-
-		if (count > max_count) max_count = count;
-		lines_vertices.reserve(max_count);
-
-		constexpr float Line_len = 3.f;
-		// cylinder side_lines
-		for (int i = 0; i < side_lines; ++i) {
-			float angle = 2.f * (float)M_PI / (float)side_lines * i; 
-			float x = std::cos(angle);
-			float y = std::sin(angle);
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = Line_len *.5f},
-				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = -Line_len * .5f},
-				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
-			});
-		}
-
-		for (int i = 0; i < face_lines; ++i) {
-			float angle = 2.f * (float)M_PI / (float)side_lines * i; 
-			float x = std::cos(angle);
-			float y = std::sin(angle);
-
-			// circle face 1
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = -Line_len * .5f},
-				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
-				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -x, .y = y, .z = -Line_len * .5f},
-				.Color{ .r = 0x00, .g = 0xff, .b = 0x00, .a = 0xff },
-				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
-			});
-
-			// circle face 2
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = x, .y = y, .z = Line_len * .5f},
-				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
-				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
-			});
-			lines_vertices.emplace_back(PosColVertex{
-				.Position{.x = -x, .y = y, .z = Line_len * .5f},
-				.Color{ .r = 0xff, .g = 0x00, .b = 0x00, .a = 0xff },
-				//.Color{ .r = uint8_t(0xff * std::sin(2.f * time)), .g = uint8_t(0xff * sinT), .b = uint8_t(0xff * std::cos(2.f * time)), .a = 0xff },
-			});
-		}
-
-		assert(lines_vertices.size() == count);
-	}
-
-	if (false) { // make some objects
-		object_instances.clear();
-
-		if (false) { // plane translated +x by one unit
-			mat4 WORLD_FROM_LOCAL{
-				1.f, 0.f, 0.f, 0.f,
-				0.f, 1.f, 0.f, 0.f,
-				0.f, 0.f, 1.f, 0.f,
-				0.f, 0.f, 0.f, 1.f,
-			};
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = plane_vertices,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
-				},
-			});
-		}
-
-		constexpr size_t Width = 1;
-		constexpr size_t Height = 1;
-		constexpr size_t Depth = 1;
-		constexpr float Spacing = 2.f;
-
-		auto emplace_rotating_torus = [&](uint32_t w, uint32_t h, uint32_t d) {
-			float x = (float(w) - float(Width) / 2.f + .5f) * Spacing;
-			float y = (float(h) - float(Height) / 2.f + .5f) * Spacing;
-			float z = (float(d) - float(Depth) / 2.f + .5f) * Spacing;
-			float ang = time / 60.f * 2.f * float(M_PI) * 10.f;
-			float ca = std::cos(ang);
-			float sa = std::sin(ang);
-			mat4 WORLD_FROM_LOCAL{
-				ca, 0.f, -sa, 0.f,
-				0.f, 1.f, 0.f, 0.f,
-				sa, 0.f, ca, 0.f,
-				x, y, z, 1.f,
-			};
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = torus_vertices,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
-				},
-				.texture = 3,
-			});
-		};
-
-		auto emplace_sphere = [&](uint32_t w, uint32_t h, uint32_t d) {
-			float x = (float(w) - float(Width) / 2.f + .5f) * Spacing;
-			float y = (float(h) - float(Height) / 2.f + .5f) * Spacing;
-			float z = (float(d) - float(Depth) / 2.f + .5f) * Spacing;
-			mat4 WORLD_FROM_LOCAL{
-				1.f, 0.f, 0.f, 0.f,
-				0.f, 1.f, 0.f, 0.f,
-				0.f, 0.f, 1.f, 0.f,
-				x, y, z, 1.f,
-			};
-
-			object_instances.emplace_back(ObjectInstance{
-				.vertices = sphere_vertices,
-				.transform{
-					.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL = WORLD_FROM_LOCAL,
-					.WORLD_FROM_LOCAL_NORMAL = WORLD_FROM_LOCAL,
-				},
-				.texture = 2,
-			});
-		};
-
-		for (uint32_t w = 0; w < Width; ++w) {
-			for (uint32_t h = 0; h < Height; ++h) {
-				for (uint32_t d = 0; d < Depth; ++d) {
-					// emplace_rotating_torus(w, h, d);
-					emplace_sphere(w, h, d);
-				}
-			}
-		} 
 	}
 
 	{ // compile objects to draw -- objects to be pruned here
@@ -1598,6 +1271,126 @@ void Tutorial::update(float dt) {
 		for (auto &inst : object_instances) {
 			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;
 			drawables[inst.buffer].emplace_back(&inst);
+		}
+	}
+
+	if (camera_mode == CameraMode::Debug) {
+		lines_vertices.clear();
+		
+		{ // draw frustrum
+			glm::mat4 debug_WORLD_FROM_CLIP = glm::inverse(glm::make_mat4(debug_CLIP_FROM_WORLD.data()));
+			// frustrum in clip space transformed to world
+			glm::vec4 frustrum[8] = {
+				debug_WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f, 0.f,  1.f }, // near bl
+				debug_WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f, 0.f,  1.f }, // near br
+				debug_WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f, 0.f,  1.f }, // near tl
+				debug_WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f, 0.f,  1.f }, // near tr
+
+				debug_WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f,  1.f,  1.f }, // far bl
+				debug_WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f,  1.f,  1.f }, // far br
+				debug_WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f,  1.f,  1.f }, // far tl
+				debug_WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f,  1.f,  1.f }, // far tr
+			};
+
+			for (size_t i = 0; i < 8; ++i) {
+				frustrum[i] /= frustrum[i].w;
+			}
+
+			glm::u8vec4 frustrum_color = glm::u8vec4(255, 255, 0, 255);
+
+			// draw near plane
+			for (size_t i = 0; i < 4; ++i) {
+				lines_vertices.emplace_back(PosColVertex{
+					.Position = frustrum[i],
+					.Color = frustrum_color
+				});
+				lines_vertices.emplace_back(PosColVertex{
+					.Position = frustrum[(i+1) % 4],
+					.Color = frustrum_color
+				});
+			}
+
+			// draw far plane
+			for (size_t i = 0; i < 4; ++i) {
+				lines_vertices.emplace_back(PosColVertex{
+					.Position = frustrum[4 + i],
+					.Color = frustrum_color
+				});
+				lines_vertices.emplace_back(PosColVertex{
+					.Position = frustrum[4 + (i+1) % 4],
+					.Color = frustrum_color
+				});
+			}
+
+			// connect planes
+			for (size_t i = 0; i < 4; ++i) {
+				lines_vertices.emplace_back(PosColVertex{
+					.Position = frustrum[i],
+					.Color = frustrum_color
+				});
+				lines_vertices.emplace_back(PosColVertex{
+					.Position = frustrum[i+4],
+					.Color = frustrum_color
+				});
+			}
+		}
+
+		{ // draw bounding boxes of visible objects
+			// bbox color
+			glm::u8vec4 bbox_color = glm::u8vec4(0, 255, 0, 255);
+			for (auto &[_, instances] : drawables) {
+				for (auto &inst : instances) {
+					glm::mat4 WORLD_FROM_LOCAL = glm::make_mat4(inst->transform.WORLD_FROM_LOCAL.data());
+					auto aabb = aabbs[inst->buffer];
+					glm::vec4 bbox[8] = {
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.min.z, 1.f },
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.min.z, 1.f },
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.min.z, 1.f },
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.min.z, 1.f },
+
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.max.z, 1.f },
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.max.z, 1.f },
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.max.z, 1.f },
+						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.max.z, 1.f },
+					};
+
+					// draw bottom face
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[(i+1) % 4],
+							.Color = bbox_color
+						});
+					}
+
+					// draw top face
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[4 + i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[4 + (i+1) % 4],
+							.Color = bbox_color
+						});
+					}
+
+					// connect faces
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i+4],
+							.Color = bbox_color
+						});
+					}
+				}
+			}
 		}
 	}
 }
@@ -1611,42 +1404,54 @@ void Tutorial::on_input(InputEvent const &evt) {
 	}
 
 	// general ctrls
-	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
-		// switch cam modes
-		int dir = (evt.key.mods & GLFW_MOD_SHIFT) ? -1 : 1;
-		camera_mode = CameraMode((int(camera_mode) + dir + 3) % 3);
-		selected_user_camera = camera_mode == CameraMode::Scene ? 0 : int(camera_mode) - 1;
-		return;
+	if (evt.type == InputEvent::KeyDown) {
+	
+		if (evt.key.key == GLFW_KEY_TAB && camera_mode != CameraMode::Debug) {
+			// switch cam modes
+			int dir = (evt.key.mods & GLFW_MOD_SHIFT) ? -1 : 1;
+			camera_mode = CameraMode((int(camera_mode) + dir + 2) % 2);
+			return;
+		} else if (evt.key.key == GLFW_KEY_F3) {
+			// switch to debug, and save previous or switch back
+			if (camera_mode == CameraMode::Debug) {
+				camera_mode = last_mode;
+				last_mode = CameraMode::Debug;
+			} else {
+				debug_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
+				last_mode = camera_mode;
+				camera_mode = CameraMode::Debug;
+			}
+		}
 	}
 
 	// free cam ctrls
 	if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
-		OrbitCamera &free_camera = user_cameras[selected_user_camera];
-		
 		if (evt.type == InputEvent::MouseWheel) {
+			OrbitCamera &user_camera = camera_mode == CameraMode::Free ? free_camera : debug_camera;
 			// change dist by 10% every scroll click
-			free_camera.radius *= std::exp(std::log(1.1f) * -evt.wheel.y);
+			user_camera.radius *= std::exp(std::log(1.1f) * -evt.wheel.y);
 
 			// make sure cam isnt too close or too far from target
-			free_camera.radius = std::max(free_camera.radius, .5f * free_camera.near);
-			free_camera.radius = std::min(free_camera.radius, 2.f * free_camera.far);
+			user_camera.radius = std::max(user_camera.radius, .5f * user_camera.near);
+			user_camera.radius = std::min(user_camera.radius, 2.f * user_camera.far);
 			return;
 		}
 
 		if (evt.type == InputEvent::MouseButtonDown && evt.button.button == GLFW_MOUSE_BUTTON_LEFT && (evt.button.mods & GLFW_MOD_SHIFT)) {
 			// start panning
+			OrbitCamera &user_camera = camera_mode == CameraMode::Free ? free_camera : debug_camera;
 			float init_x = evt.button.x;
 			float init_y = evt.button.y;
-			OrbitCamera init_camera = user_cameras[selected_user_camera];
+			OrbitCamera init_camera = user_camera;
 
-			action = [this,init_x,init_y,init_camera,&free_camera](InputEvent const &evt) {
+			action = [this,init_x,init_y,init_camera,&user_camera](InputEvent const &evt) {
 				if (evt.type == InputEvent::MouseButtonUp && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
 					// cancel
 					action = nullptr;
 					return;
 				}
 				if (evt.type == InputEvent::MouseMotion) {
-					float height = 2.f * std::tan(free_camera.fov * .5f) * free_camera.radius;
+					float height = 2.f * std::tan(user_camera.fov * .5f) * user_camera.radius;
 
 					// motion at target
 					float dx = (evt.motion.x - init_x) / rtg.swapchain_extent.height * height;
@@ -1659,9 +1464,9 @@ void Tutorial::on_input(InputEvent const &evt) {
 					);
 
 					// move desired distance
-					free_camera.target_x = init_camera.target_x - dx * camera_from_world[0] - dy * camera_from_world[1];
-					free_camera.target_y = init_camera.target_y - dx * camera_from_world[4] - dy * camera_from_world[5];
-					free_camera.target_z = init_camera.target_z - dx * camera_from_world[8] - dy * camera_from_world[9];
+					user_camera.target_x = init_camera.target_x - dx * camera_from_world[0] - dy * camera_from_world[1];
+					user_camera.target_y = init_camera.target_y - dx * camera_from_world[4] - dy * camera_from_world[5];
+					user_camera.target_z = init_camera.target_z - dx * camera_from_world[8] - dy * camera_from_world[9];
 					return;
 				}
 			};
@@ -1670,12 +1475,13 @@ void Tutorial::on_input(InputEvent const &evt) {
 
 		if (evt.type == InputEvent::MouseButtonDown && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
 			// start tumble
+			OrbitCamera &user_camera = camera_mode == CameraMode::Free ? free_camera : debug_camera;
 
 			float init_x = evt.button.x;
 			float init_y = evt.button.y;
-			OrbitCamera init_camera = user_cameras[selected_user_camera];
+			OrbitCamera init_camera = user_camera;
 
-			action = [this,init_x,init_y,init_camera,&free_camera](InputEvent const &evt) {
+			action = [this,init_x,init_y,init_camera,&user_camera](InputEvent const &evt) {
 				if (evt.type == InputEvent::MouseButtonUp && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
 					// cancel upon button lifted
 					action = nullptr;
@@ -1688,17 +1494,29 @@ void Tutorial::on_input(InputEvent const &evt) {
 					// rotate cam based on motion
 					float speed = float(M_PI); // how much rotation happens at one full window height
 					float flip_x = (std::abs(init_camera.elevation) > .5f * float(M_PI ? -1.f : 1.f));
-					free_camera.azimuth = init_camera.azimuth - dx * speed * flip_x;
-					free_camera.elevation = init_camera.elevation - dy * speed;
+					user_camera.azimuth = init_camera.azimuth - dx * speed * flip_x;
+					user_camera.elevation = init_camera.elevation - dy * speed;
 
 					// reduce azimuth and elevation to [-pi, pi] range
 					const float twopi = 2.f * float(M_PI);
-					free_camera.azimuth -= std::round(free_camera.azimuth / twopi) * twopi;
-					free_camera.elevation -= std::round(free_camera.elevation / twopi) * twopi;
+					user_camera.azimuth -= std::round(user_camera.azimuth / twopi) * twopi;
+					user_camera.elevation -= std::round(user_camera.elevation / twopi) * twopi;
 					return;
 				}
 			};
 			return;
+		}
+	} else if (camera_mode == CameraMode::Scene) {
+		if (evt.type == InputEvent::MouseButtonDown && evt.button.button == GLFW_MOUSE_BUTTON_LEFT) {
+			if (selected_scene_camera == scene_cameras.begin()) {
+				selected_scene_camera = scene_cameras.end();
+			}
+			--selected_scene_camera;
+		} else 	if (evt.type == InputEvent::MouseButtonDown && evt.button.button == GLFW_MOUSE_BUTTON_RIGHT) {
+			selected_scene_camera++;
+			if (selected_scene_camera == scene_cameras.end()) {
+				selected_scene_camera = scene_cameras.begin();
+			}
 		}
 	}
 }

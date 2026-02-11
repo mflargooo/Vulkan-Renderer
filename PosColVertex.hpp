@@ -3,10 +3,11 @@
 #include <vulkan/vulkan_core.h>
 
 #include <cstdint>
+#include <glm/glm.hpp>
 
 struct PosColVertex {
-    struct { float x, y, z; } Position;
-    struct { uint8_t r, g, b, a; } Color;
+    glm::vec3 Position;
+    glm::u8vec4 Color;
 
     // a pipeline vertex input state that works with a buffer holding a PosColorVertex[] array
     static const VkPipelineVertexInputStateCreateInfo array_input_state;

@@ -173,7 +173,7 @@ struct Tutorial : RTG::Application {
 		Scene = 0,
 		Free = 1,
 		Debug = 2,
-	} camera_mode = CameraMode(rtg.configuration.camera.compare("") == 0);
+	} last_mode = CameraMode::Debug, camera_mode = CameraMode(rtg.configuration.camera.compare("") == 0);
 
 	struct OrbitCamera { // used when camera_mode == CameraMode::Free
 		float target_x = 0.f, target_y = 0.f, target_z = 0.f; // cam looking + orbiting
@@ -184,7 +184,7 @@ struct Tutorial : RTG::Application {
 		float fov = 60.f / 180.f * float(M_PI); // vfov (rad)
 		float near = .1f; // near clip
 		float far = 1000.f; // far clip
-	} user_cameras[2]; // free camera at 0; debug at [1]
+	} free_camera, debug_camera;
 
 	struct Camera {
 		ObjectsPipeline::Transform transform;
@@ -197,11 +197,18 @@ struct Tutorial : RTG::Application {
 	std::unordered_map< std::string, Camera >::iterator selected_scene_camera;
 	size_t selected_user_camera = 0;
 	
+	mat4 debug_CLIP_FROM_WORLD;
 	mat4 CLIP_FROM_WORLD;
 
 	std::vector< LinesPipeline::Vertex > lines_vertices;
 
 	ObjectsPipeline::World world;
+
+	struct AABB {
+		glm::vec3 min;
+		glm::vec3 max;
+	};
+	std::unordered_map< Helpers::AllocatedBuffer *, AABB > aabbs;
 
 	struct ObjectInstance {
 		ObjectVertices vertices;
