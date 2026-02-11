@@ -1248,20 +1248,35 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
 	
-		{ // set scissor rect
+		float swap_aspect = (float)(rtg.swapchain_extent.width) / (float)(rtg.swapchain_extent.height);
+		float camera_aspect = 1.77778f;
+		float width = (float)(rtg.swapchain_extent.width), height = (float)(rtg.swapchain_extent.height), x = 0, y = 0;
+		if (swap_aspect > camera_aspect) { // set scissor rect
+			width = rtg.swapchain_extent.width * (camera_aspect / swap_aspect);
+			height = float(rtg.swapchain_extent.height);
+			x = (rtg.swapchain_extent.width - width) * .5f;
+			y = 0.f;
+		} else {
+			width = float(rtg.swapchain_extent.width);
+			height = rtg.swapchain_extent.height * (swap_aspect / camera_aspect);
+			x = 0.f;
+		 	y = (rtg.swapchain_extent.height - height) * .5f;
+		}
+
+		{
 			VkRect2D scissor {
-				.offset = {.x = 0, .y = 0},
-				.extent = rtg.swapchain_extent,
+				.offset = {.x = (int)x, .y = (int)y},
+				.extent = { (uint32_t)width, (uint32_t)height },
 			};
 			vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
 		}		
 
 		{ // configure viewport transform
 			VkViewport viewport {
-				.x = 0.f,
-				.y = 0.f,
-				.width = float(rtg.swapchain_extent.width),
-				.height = float(rtg.swapchain_extent.height),
+				.x = x,
+				.y = y,
+				.width = width,
+				.height = height,
 				.minDepth = 0.f,
 				.maxDepth = 1.f,
 			};
