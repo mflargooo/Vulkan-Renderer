@@ -15,6 +15,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <s72/S72.hpp>
 #include <s72/DataStream.hpp>
 #include <variant>
@@ -872,7 +873,7 @@ int Tutorial::load_scene(const std::string &filename) {
 		for (auto &[key, texture] : s72.textures) {
 			if (rtg.configuration.debug) std::cerr << "[TEXTURE] " << texture.src << std::endl;
 			int x = 0, y = 0, c = 0;
-			stbi_set_flip_vertically_on_load(false);
+			stbi_set_flip_vertically_on_load(true);
 			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
 
 			if (tex) {
@@ -957,25 +958,25 @@ int Tutorial::load_scene(const std::string &filename) {
 		std::stack< Element > frontier;
 
 		// build the frontier from scene roots
-		for (auto &root : s72.scene.roots) {
-			frontier.push(Element{root, glm::mat4(1.f)});
+		for (auto root : s72.scene.roots) {
+			frontier.push({ .node = root, .xf = glm::mat4(1.f) });
 		}
 		
 		// dfs through the DAG to populate instances
 		while (!frontier.empty()) {
-			Element elem = frontier.top();
+			Element elem = std::move(frontier.top());
 			frontier.pop();
 
 			S72::Node *node = elem.node;
-			// transform parent space to local
+ 			// transform parent space to local
 			glm::mat4 xf = elem.xf *
 				glm::translate(glm::mat4(1.0f), node->translation) *
-				glm::mat4_cast(node->rotation) *
+				glm::mat4_cast(glm::quat(node->rotation.z, node->rotation.w, node->rotation.x, node->rotation.y)) *
 				glm::scale(glm::mat4(1.0f), node->scale);
 
 			// push children to frontier with this xf as their parent space
 			for (auto child : node->children) {
-				frontier.push(Element{child, xf});
+				frontier.push({ .node = child, .xf = xf });
 			}
 
 			// handle the node appropriately
@@ -1003,13 +1004,15 @@ int Tutorial::load_scene(const std::string &filename) {
 			} else if (node->camera) {
 				if (rtg.configuration.debug) std::cerr << "[CAMERA] " << node->camera->name << " located at " << glm::to_string(xf) << std::endl; 
 				if (auto p_proj = std::get_if<S72::Camera::Perspective>(&node->camera->projection)) {
-					scene_cameras.insert({ node->camera->name, {
-						.transform = mat4_from_glm(xf),
+					scene_cameras[node->camera->name] = {
+						.transform = {
+							.WORLD_FROM_LOCAL = mat4_from_glm(xf),
+						},
 						.aspect = p_proj->aspect,
 						.vfov = p_proj->vfov,
 						.near = p_proj->near,
 						.far = p_proj->far,
-					} });
+					};
 				}
 			}
 		}
@@ -1393,11 +1396,7 @@ void Tutorial::update(float dt) {
 			scene_camera.aspect, // rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
 			scene_camera.near, //near
 			scene_camera.far //far
-		) * look_at (
-			scene_camera.transform.WORLD_FROM_LOCAL[9], scene_camera.transform.WORLD_FROM_LOCAL[10], scene_camera.transform.WORLD_FROM_LOCAL[11],
-			-scene_camera.transform.WORLD_FROM_LOCAL[5], -scene_camera.transform.WORLD_FROM_LOCAL[6], -scene_camera.transform.WORLD_FROM_LOCAL[7],
-			scene_camera.transform.WORLD_FROM_LOCAL[1], scene_camera.transform.WORLD_FROM_LOCAL[2], scene_camera.transform.WORLD_FROM_LOCAL[3]
-		);
+		) * mat4_from_glm(glm::inverse(glm::make_mat4(scene_camera.transform.WORLD_FROM_LOCAL.data())));
 	} else if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
 		OrbitCamera &free_camera = user_cameras[selected_user_camera];
 		CLIP_FROM_WORLD = perspective(
