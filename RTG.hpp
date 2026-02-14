@@ -83,6 +83,9 @@ struct RTG {
 		// camera to start on
 		std::string camera = "";
 
+		// culling mode
+		std::string culling_mode = "none";
+
 		//for configuration construction + management:
 		Configuration() = default;
 		void parse(int argc, char **argv); //parse command-line options; throws on error

@@ -7,6 +7,8 @@
 
 #include "RTG.hpp"
 
+#include <s72/S72.hpp>
+
 struct Tutorial : RTG::Application {
 
 	Tutorial(RTG &);
@@ -204,6 +206,8 @@ struct Tutorial : RTG::Application {
 
 	ObjectsPipeline::World world;
 
+	S72 s72;
+
 	struct AABB {
 		glm::vec3 min;
 		glm::vec3 max;
@@ -234,6 +238,13 @@ struct Tutorial : RTG::Application {
 	std::unordered_map< std::string, Material > materials;
 
 	int load_scene(const std::string &file);
+	void parse_scene_graph();
+
+	float animation_time = 0.f;
+	float max_animation_time = 0.f;
+	std::vector< int > animation_positions;
+	int animation_step = 1;
+	bool pause_animation = false;
 
 	//--------------------------------------------------------------------
 	//Rendering function, uses all the resources above to queue work to draw a frame:

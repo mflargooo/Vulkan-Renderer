@@ -20,6 +20,7 @@
 #include <s72/DataStream.hpp>
 #include <variant>
 #include <limits>
+#include <algorithm>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
@@ -639,9 +640,8 @@ void Tutorial::destroy_framebuffers() {
 int Tutorial::load_scene(const std::string &filename) {
 
 	// try-catch from print-scene.cpp
-	S72 s72;
 	try {
-		s72 = S72::load(filename);
+		s72 = std::move(S72::load(filename));
 	} catch (std::exception &e) {
 		std::cerr << "Failed to load s72-format scene from '" << filename << "':\n" << e.what() << std::endl;
 		return -1;
@@ -732,7 +732,7 @@ int Tutorial::load_scene(const std::string &filename) {
 
 	{ // load materials
 		for (auto &[key, material] : s72.materials) {
-			if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
+			// if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
 			
 			int albedo_id = -1;
 			int normal_id = -1;
@@ -777,85 +777,7 @@ int Tutorial::load_scene(const std::string &filename) {
 		}
 	}
 
-	{ // populate all object instances
-		struct Element {
-			S72::Node *node;
-			glm::mat4 xf;
-		};
-		std::stack< Element > frontier;
-
-		// build the frontier from scene roots
-		for (auto root : s72.scene.roots) {
-			frontier.push({ .node = root, .xf = glm::mat4(1.f) });
-		}
-		
-		// dfs through the DAG to populate instances
-		while (!frontier.empty()) {
-			Element elem = std::move(frontier.top());
-			frontier.pop();
-
-			S72::Node *node = elem.node;
- 			// transform parent space to local
-			glm::mat4 xf = elem.xf *
-				glm::translate(glm::mat4(1.0f), node->translation) *
-				glm::mat4_cast(glm::quat(node->rotation.z, node->rotation.w, node->rotation.x, node->rotation.y)) *
-				glm::scale(glm::mat4(1.0f), node->scale);
-
-			// push children to frontier with this xf as their parent space
-			for (auto child : node->children) {
-				frontier.push({ .node = child, .xf = xf });
-			}
-
-			// handle the node appropriately
-			if (node->mesh) {
-				if (rtg.configuration.debug) std::cerr << "[MESH] " << node->mesh->name << " located at " << glm::to_string(xf) << std::endl; 
-				
-				Material material{ .albedo_id = 0 };
-				if (node->mesh->material) {
-					material = materials[node->mesh->material->name];
-				}
-				// create object instance
-				object_instances.emplace_back(ObjectInstance{
-					.vertices{
-						.first = 0,
-						.count = node->mesh->count
-					},
-					.buffer = &scene_vertices.at(node->mesh->attributes.at("POSITION").src.path),
-					.transform{
-						/* .CLIP_FROM_LOCAL = mat4_from_glm(glm::mat4(1.f)), -- filled by update */
-						.WORLD_FROM_LOCAL = mat4_from_glm(xf),
-						.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(glm::transpose(glm::inverse(xf))),
-					},
-					.texture = uint32_t(material.albedo_id),
-				});
-			} else if (node->camera) {
-				if (rtg.configuration.debug) std::cerr << "[CAMERA] " << node->camera->name << " located at " << glm::to_string(xf) << std::endl; 
-				if (auto p_proj = std::get_if<S72::Camera::Perspective>(&node->camera->projection)) {
-					scene_cameras[node->camera->name] = {
-						.transform = {
-							.WORLD_FROM_LOCAL = mat4_from_glm(xf),
-						},
-						.aspect = p_proj->aspect,
-						.vfov = p_proj->vfov,
-						.near = p_proj->near,
-						.far = p_proj->far,
-					};
-				}
-			} else if (node->light) {
-				if (auto p_sun = std::get_if< S72::Light::Sun >(&node->light->source)) {
-					glm::vec3 direction = glm::normalize(glm::vec3(xf * glm::vec4(0.f, 0.f, 1.f, 0.f)));
-					
-					if (node->light->name == "Sun") {
-						world.SUN_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
-						world.SUN_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
-					} else if (node->light->name == "Sky") {
-						world.SKY_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
-						world.SKY_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
-					}
-				}
-			}
-		}
-	}
+	parse_scene_graph();
 
 	if (rtg.configuration.camera.compare("")) { // select correct scene camera, if exists
 		auto it = scene_cameras.find(rtg.configuration.camera);
@@ -866,7 +788,99 @@ int Tutorial::load_scene(const std::string &filename) {
 
 		selected_scene_camera = it;
 	}
+
+	animation_positions.clear();
+	animation_positions.resize(s72.drivers.size(), 0);
+
+	for (auto &driver : s72.drivers) {
+		for (auto d_time : driver.times) {
+			max_animation_time = std::max(d_time, max_animation_time);
+		}
+	}
+
 	return 0;
+};
+
+void Tutorial::parse_scene_graph() { // populate all object instances
+	object_instances.clear();
+
+	struct Element {
+		S72::Node *node;
+		glm::mat4 xf;
+	};
+	std::stack< Element > frontier;
+
+	// build the frontier from scene roots
+	for (auto root : s72.scene.roots) {
+		frontier.push({ .node = root, .xf = glm::mat4(1.f) });
+	}
+	
+	// dfs through the DAG to populate instances
+	while (!frontier.empty()) {
+		Element elem = std::move(frontier.top());
+		frontier.pop();
+
+		S72::Node *node = elem.node;
+		// transform parent space to local
+		glm::mat4 xf = elem.xf *
+			glm::translate(glm::mat4(1.0f), node->translation) *
+			glm::mat4_cast(glm::quat(node->rotation.z, node->rotation.w, node->rotation.x, node->rotation.y)) *
+			glm::scale(glm::mat4(1.0f), node->scale);
+
+		// push children to frontier with this xf as their parent space
+		for (auto child : node->children) {
+			frontier.push({ .node = child, .xf = xf });
+		}
+
+		// handle the node appropriately
+		if (node->mesh) {
+			// if (rtg.configuration.debug) std::cerr << "[MESH] " << node->mesh->name << " located at " << glm::to_string(xf) << std::endl; 
+			
+			Material material{ .albedo_id = 0 };
+			if (node->mesh->material) {
+				material = materials[node->mesh->material->name];
+			}
+			// create object instance
+			object_instances.emplace_back(ObjectInstance{
+				.vertices{
+					.first = 0,
+					.count = node->mesh->count
+				},
+				.buffer = &scene_vertices.at(node->mesh->attributes.at("POSITION").src.path),
+				.transform{
+					/* .CLIP_FROM_LOCAL = mat4_from_glm(glm::mat4(1.f)), -- filled by update */
+					.WORLD_FROM_LOCAL = mat4_from_glm(xf),
+					.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(glm::transpose(glm::inverse(xf))),
+				},
+				.texture = uint32_t(material.albedo_id),
+			});
+		} else if (node->camera) {
+			// if (rtg.configuration.debug) std::cerr << "[CAMERA] " << node->camera->name << " located at " << glm::to_string(xf) << std::endl; 
+			if (auto p_proj = std::get_if<S72::Camera::Perspective>(&node->camera->projection)) {
+				scene_cameras[node->camera->name] = {
+					.transform = {
+						.WORLD_FROM_LOCAL = mat4_from_glm(xf),
+					},
+					.aspect = p_proj->aspect,
+					.vfov = p_proj->vfov,
+					.near = p_proj->near,
+					.far = p_proj->far,
+				};
+			}
+		} else if (node->light) {
+			if (auto p_sun = std::get_if< S72::Light::Sun >(&node->light->source)) {
+				glm::vec3 direction = glm::normalize(glm::vec3(xf * glm::vec4(0.f, 0.f, 1.f, 0.f)));
+				
+				if (node->light->name == "Sun") {
+					world.SUN_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
+					world.SUN_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
+				} else if (node->light->name == "Sky") {
+					world.SKY_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
+					world.SKY_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
+				}
+			}
+		}
+	}
 };
 
 void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
@@ -1242,6 +1256,53 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 void Tutorial::update(float dt) {
 	time = std::fmod(time + dt, 60.f);
 
+	if (!pause_animation) {
+		animation_time = std::clamp(animation_time + (float)animation_step * dt, 0.f, max_animation_time);
+		for (size_t i = 0; i < animation_positions.size(); ++i) {
+			auto &driver = s72.drivers[i];
+			auto &pos = animation_positions[i];
+
+			pos = std::clamp(pos, 0, (int)driver.times.size() - 1);
+			int next_pos = std::clamp(pos + animation_step, 0, (int)driver.times.size() - 1);
+
+			float t_a = driver.times[pos];
+			float t_b = driver.times[next_pos];
+			float t = pos != next_pos ? (animation_time - t_a) / (t_b - t_a) : (float)((1 + animation_step) >> 1);
+
+			auto interp = [interp_mode=driver.interpolation](const glm::vec4 &a, const glm::vec4 &b, const float &t) -> glm::vec4 {
+				if (interp_mode == S72::Driver::Interpolation::LINEAR) {
+					return glm::mix(a, b, t);
+				} else if (interp_mode == S72::Driver::Interpolation::SLERP) {
+					glm::quat d = glm::slerp(glm::quat(a), glm::quat(b), t);
+					return glm::vec4(d.x, d.y, d.z, d.w);
+				} else if (interp_mode == S72::Driver::Interpolation::STEP) {
+					return a;
+				}
+
+				return {};
+			};
+
+			if (driver.channel == S72::Driver::Channel::translation){
+				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
+				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
+				driver.node.translation = glm::mix(a, b, t);
+			} else if (driver.channel == S72::Driver::Channel::rotation) {
+				glm::quat a = glm::quat(driver.values[4*pos], driver.values[4*pos+1], driver.values[4*pos+2], driver.values[4*pos+3]);
+				glm::quat b = glm::quat(driver.values[4*next_pos], driver.values[4*next_pos+1], driver.values[4*next_pos+2], driver.values[4*next_pos+3]);
+				driver.node.rotation = glm::slerp(a, b, t);
+			} else if (driver.channel == S72::Driver::Channel::scale) {
+				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
+				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
+				driver.node.scale = glm::mix(a, b, t);
+			}			
+
+			if ((driver.times[next_pos] <= animation_time) && (animation_step == 1) ||
+				(driver.times[next_pos] >= animation_time) && (animation_step == -1)) {
+				pos = next_pos;
+			}
+		}
+	}
+
 	if (camera_mode == CameraMode::Scene) {
 		 //camera rotating around the origin:
 		auto scene_camera = selected_scene_camera->second;
@@ -1266,17 +1327,234 @@ void Tutorial::update(float dt) {
 		assert(0 && "only three camera modes");
 	}
 
+	if (camera_mode == CameraMode::Debug) {
+		if (last_mode == CameraMode::Free) {
+			OrbitCamera &user_camera = free_camera;
+			debug_CLIP_FROM_WORLD = perspective(
+				user_camera.fov,
+				1.7778f, // aspect
+				user_camera.near,
+				user_camera.far
+			) * orbit(
+				user_camera.target_x, user_camera.target_y, user_camera.target_z,
+				user_camera.azimuth, user_camera.elevation, user_camera.radius
+			);
+		} else if (last_mode == CameraMode::Scene) {
+			auto scene_camera = selected_scene_camera->second;
+			debug_CLIP_FROM_WORLD = perspective(
+				scene_camera.vfov, //vfov
+				scene_camera.aspect, // rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
+				scene_camera.near, //near
+				scene_camera.far //far
+			) * mat4_from_glm(glm::inverse(glm::make_mat4(scene_camera.transform.WORLD_FROM_LOCAL.data())));
+		}
+	}
+
+	{ // iterate through scene graph
+		parse_scene_graph();
+	}
+
 	{ // compile objects to draw -- objects to be pruned here
+
+		auto cull_frustrum = [](glm::vec4 frustrum[8], glm::vec4 bbox[8]) -> bool {
+			glm::vec3 frustrum_normals[5] = {
+				glm::normalize(glm::cross(glm::vec3(frustrum[0] - frustrum[1]), glm::vec3(frustrum[2] - frustrum[1]))), // frustrum forward
+				glm::normalize(glm::cross(glm::vec3(frustrum[0] - frustrum[1]), glm::vec3(frustrum[4] - frustrum[1]))), // frustrum bottom
+				glm::normalize(glm::cross(glm::vec3(frustrum[0] - frustrum[2]), glm::vec3(frustrum[4] - frustrum[2]))), // frustrum left
+				glm::normalize(glm::cross(glm::vec3(frustrum[3] - frustrum[1]), glm::vec3(frustrum[6] - frustrum[1]))), // frustrum right
+				glm::normalize(glm::cross(glm::vec3(frustrum[3] - frustrum[2]), glm::vec3(frustrum[6] - frustrum[2]))), // frustrum top
+			};
+
+			// first check with frustrum plane normals
+			for (size_t i = 0; i < 5; ++i) {
+				glm::vec3 const &f = frustrum_normals[i];
+				float min_f = FLT_MAX, max_f = -FLT_MAX;
+				float min_b = FLT_MAX, max_b = -FLT_MAX;
+
+				for (size_t k = 0; k < 8; ++k) {
+					glm::vec3 const &v = frustrum[k];
+					float d = glm::dot(f, v);
+					min_f = std::min(min_f, d);
+					max_f = std::max(max_f, d);
+				}
+
+				for (size_t k = 0; k < 8; ++k) {
+					glm::vec3 const &v = bbox[k];
+					float d = glm::dot(f, v);
+					min_b = std::min(min_b, d);
+					max_b = std::max(max_b, d);
+				}
+
+				if (max_f < min_b || max_b < min_f) return true;
+			}
+
+			// then with box normals == box edges
+			glm::vec3 bbox_edges[3] = {
+				glm::normalize(glm::vec3(bbox[1] - bbox[0])), // bbox x normal
+				glm::normalize(glm::vec3(bbox[3] - bbox[0])), // bbox y normal
+				glm::normalize(glm::vec3(bbox[4] - bbox[0])), // bbox z normal
+			};
+
+			for (size_t i = 0; i < 3; ++i) {
+				auto const &b = bbox_edges[i];
+				float min_f = FLT_MAX, max_f = -FLT_MAX;
+				float min_b = FLT_MAX, max_b = -FLT_MAX;
+
+				for (size_t k = 0; k < 8; ++k) {
+					glm::vec3 const &v = frustrum[k];
+					float d = glm::dot(b, v);
+					min_f = std::min(min_f, d);
+					max_f = std::max(max_f, d);
+				}
+
+				for (size_t k = 0; k < 8; ++k) {
+					glm::vec3 const &v = bbox[k];
+					float d = glm::dot(b, v);
+					min_b = std::min(min_b, d);
+					max_b = std::max(max_b, d);
+				}
+
+				if (max_f < min_b || max_b < min_f) return true;
+			}
+
+			// then cross of frustrum edges and bbox edges
+			glm::vec3 frustrum_edges[6] = {
+				glm::normalize(glm::vec3(frustrum[0] - frustrum[1])),
+				glm::normalize(glm::vec3(frustrum[2] - frustrum[1])),
+				glm::normalize(glm::vec3(frustrum[4] - frustrum[0])),
+				glm::normalize(glm::vec3(frustrum[5] - frustrum[1])),
+				glm::normalize(glm::vec3(frustrum[6] - frustrum[2])),
+				glm::normalize(glm::vec3(frustrum[7] - frustrum[3])),
+			};
+
+			for (size_t i = 0; i < 6; ++i) {
+				auto const &f = frustrum_edges[i];
+				for (size_t j = 0; j < 3; ++j) {
+					auto const &b = bbox_edges[j];
+					glm::vec3 c = glm::cross(f, b);
+					glm::vec3 n = glm::length(c) < .0001f ? f : glm::normalize(c);
+					float min_f = FLT_MAX, max_f = -FLT_MAX;
+					float min_b = FLT_MAX, max_b = -FLT_MAX;
+
+					for (size_t k = 0; k < 8; ++k) {
+						glm::vec3 const &v = frustrum[k];
+						float d = glm::dot(n, v);
+						min_f = std::min(min_f, d);
+						max_f = std::max(max_f, d);
+					}
+
+					for (size_t k = 0; k < 8; ++k) {
+						glm::vec3 const &v = bbox[k];
+						float d = glm::dot(n, v);
+						min_b = std::min(min_b, d);
+						max_b = std::max(max_b, d);
+					}
+
+					if (max_f < min_b || max_b < min_f) return true;
+				}
+			}
+
+			return false;
+		};
+
+		// clear drawables
+		lines_vertices.clear(); 
 		drawables.clear();
+
+		glm::mat4 WORLD_FROM_CLIP = (camera_mode == CameraMode::Debug) ? 
+			glm::inverse(glm::make_mat4(debug_CLIP_FROM_WORLD.data())) : glm::inverse(glm::make_mat4(CLIP_FROM_WORLD.data()));
+		
 		for (auto &inst : object_instances) {
 			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;
-			drawables[inst.buffer].emplace_back(&inst);
+
+			glm::mat4 WORLD_FROM_LOCAL = glm::make_mat4(inst.transform.WORLD_FROM_LOCAL.data());
+			Tutorial::AABB aabb = aabbs[inst.buffer];
+			glm::vec4 bbox[8] = {
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.min.z, 1.f },
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.min.z, 1.f },
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.min.z, 1.f },
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.min.z, 1.f },
+
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.max.z, 1.f },
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.max.z, 1.f },
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.max.z, 1.f },
+				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.max.z, 1.f },
+			};
+
+			// frustrum in clip space transformed to world
+			glm::vec4 frustrum[8] = {
+				WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f, 0.f,  1.f }, // near bl
+				WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f, 0.f,  1.f }, // near br
+				WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f, 0.f,  1.f }, // near tl
+				WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f, 0.f,  1.f }, // near tr
+
+				WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f,  1.f,  1.f }, // far bl
+				WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f,  1.f,  1.f }, // far br
+				WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f,  1.f,  1.f }, // far tl
+				WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f,  1.f,  1.f }, // far tr
+			};
+			for (size_t i = 0; i < 8; ++i) {
+				frustrum[i] /= frustrum[i].w;
+				bbox[i] /= bbox[i].w;
+			}
+
+			bool cull = false;
+			if (rtg.configuration.culling_mode == "frustrum") {
+				cull = cull_frustrum(frustrum, bbox);
+			}
+
+			if (rtg.configuration.debug && camera_mode == CameraMode::Debug) {
+				glm::u8vec4 bbox_color = glm::u8vec4(0, 255, 0, 255);
+				if (cull) {
+					// switch to red color if culled
+					bbox_color = glm::u8vec4(255, 0, 0, 255);
+				}
+
+				{ // draw bbox for debug
+					// draw bottom face
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[(i+1) % 4],
+							.Color = bbox_color
+						});
+					}
+
+					// draw top face
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[4 + i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[4 + (i+1) % 4],
+							.Color = bbox_color
+						});
+					}
+
+					// connect faces
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i+4],
+							.Color = bbox_color
+						});
+					}
+				}
+			}
+
+			if (!cull) drawables[inst.buffer].emplace_back(&inst);
 		}
 	}
 
 	if (camera_mode == CameraMode::Debug) {
-		lines_vertices.clear();
-		
+
 		{ // draw frustrum
 			glm::mat4 debug_WORLD_FROM_CLIP = glm::inverse(glm::make_mat4(debug_CLIP_FROM_WORLD.data()));
 			// frustrum in clip space transformed to world
@@ -1334,64 +1612,6 @@ void Tutorial::update(float dt) {
 				});
 			}
 		}
-
-		{ // draw bounding boxes of visible objects
-			// bbox color
-			glm::u8vec4 bbox_color = glm::u8vec4(0, 255, 0, 255);
-			for (auto &[_, instances] : drawables) {
-				for (auto &inst : instances) {
-					glm::mat4 WORLD_FROM_LOCAL = glm::make_mat4(inst->transform.WORLD_FROM_LOCAL.data());
-					auto aabb = aabbs[inst->buffer];
-					glm::vec4 bbox[8] = {
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.min.z, 1.f },
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.min.z, 1.f },
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.min.z, 1.f },
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.min.z, 1.f },
-
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.max.z, 1.f },
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.max.z, 1.f },
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.max.z, 1.f },
-						WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.max.z, 1.f },
-					};
-
-					// draw bottom face
-					for (size_t i = 0; i < 4; ++i) {
-						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[i],
-							.Color = bbox_color
-						});
-						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[(i+1) % 4],
-							.Color = bbox_color
-						});
-					}
-
-					// draw top face
-					for (size_t i = 0; i < 4; ++i) {
-						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[4 + i],
-							.Color = bbox_color
-						});
-						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[4 + (i+1) % 4],
-							.Color = bbox_color
-						});
-					}
-
-					// connect faces
-					for (size_t i = 0; i < 4; ++i) {
-						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[i],
-							.Color = bbox_color
-						});
-						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[i+4],
-							.Color = bbox_color
-						});
-					}
-				}
-			}
-		}
 	}
 }
 
@@ -1405,7 +1625,6 @@ void Tutorial::on_input(InputEvent const &evt) {
 
 	// general ctrls
 	if (evt.type == InputEvent::KeyDown) {
-	
 		if (evt.key.key == GLFW_KEY_TAB && camera_mode != CameraMode::Debug) {
 			// switch cam modes
 			int dir = (evt.key.mods & GLFW_MOD_SHIFT) ? -1 : 1;
@@ -1417,10 +1636,14 @@ void Tutorial::on_input(InputEvent const &evt) {
 				camera_mode = last_mode;
 				last_mode = CameraMode::Debug;
 			} else {
-				debug_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
 				last_mode = camera_mode;
 				camera_mode = CameraMode::Debug;
 			}
+		} else if (evt.key.key == GLFW_KEY_SPACE) {
+			pause_animation = !pause_animation;
+		} else if (!pause_animation && evt.key.key == GLFW_KEY_LEFT_ALT) {
+			animation_step = -animation_step;
+			pause_animation = false;
 		}
 	}
 

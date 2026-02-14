@@ -52,6 +52,9 @@ void RTG::Configuration::parse(int argc, char **argv) {
 		} else if (arg == "--camera") {
 			argi += 1;
 			camera = argv[argi];
+		} else if (arg == "--culling") {
+			argi += 1;
+			culling_mode = argv[argi];
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
