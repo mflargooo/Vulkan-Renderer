@@ -679,15 +679,21 @@ int Tutorial::load_scene(const std::string &filename) {
 
 	{ // create AABBs
 		for (auto &[_, mesh] : s72.meshes) {
-			PosNorTanTexVertex *vertices = (PosNorTanTexVertex *)VertexStream::load(mesh.attributes.at("POSITION").src.path).data(); // vertex data
-
-			auto &buffer = scene_vertices[mesh.attributes.at("POSITION").src.path];
+			auto const &path = mesh.attributes.at("POSITION").src.path;
+			auto const &stride = mesh.attributes.at("POSITION").stride;
+			auto const &offset = mesh.attributes.at("POSITION").offset;
+			char *vertices = VertexStream::load(path).data(); // vertex data
+			auto &buffer = scene_vertices[path];
 			AABB aabb = AABB{
 				.min = glm::vec3(std::numeric_limits<float>::max()),
-				.max = glm::vec3(std::numeric_limits<float>::min()),
+				.max = glm::vec3(-std::numeric_limits<float>::max()),
 			};
-			for (size_t i = 0; i < mesh.count; ++i) {
-				glm::vec3 pos = vertices[i].Position;
+			for (size_t i = 1; i < mesh.count; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
+				glm::vec3 pos = glm::vec3{
+					*(float *)&vertices[i * stride + offset],
+					*(float *)&vertices[i * stride + offset + 4],
+					*(float *)&vertices[i * stride + offset + 8],
+				};
 				aabb.min = glm::min(aabb.min, pos);
 				aabb.max = glm::max(aabb.max, pos);
 			}
@@ -1495,7 +1501,6 @@ void Tutorial::update(float dt) {
 			};
 			for (size_t i = 0; i < 8; ++i) {
 				frustrum[i] /= frustrum[i].w;
-				bbox[i] /= bbox[i].w;
 			}
 
 			bool cull = false;
@@ -1514,11 +1519,11 @@ void Tutorial::update(float dt) {
 					// draw bottom face
 					for (size_t i = 0; i < 4; ++i) {
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[i],
+							.Position = glm::vec3(bbox[i]),
 							.Color = bbox_color
 						});
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[(i+1) % 4],
+							.Position = glm::vec3(bbox[(i+1) % 4]),
 							.Color = bbox_color
 						});
 					}
@@ -1526,11 +1531,11 @@ void Tutorial::update(float dt) {
 					// draw top face
 					for (size_t i = 0; i < 4; ++i) {
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[4 + i],
+							.Position = glm::vec3(bbox[4 + i]),
 							.Color = bbox_color
 						});
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[4 + (i+1) % 4],
+							.Position = glm::vec3(bbox[4 + (i+1) % 4]),
 							.Color = bbox_color
 						});
 					}
@@ -1538,11 +1543,11 @@ void Tutorial::update(float dt) {
 					// connect faces
 					for (size_t i = 0; i < 4; ++i) {
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[i],
+							.Position = glm::vec3(bbox[i]),
 							.Color = bbox_color
 						});
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = bbox[i+4],
+							.Position = glm::vec3(bbox[i+4]),
 							.Color = bbox_color
 						});
 					}
