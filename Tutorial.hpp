@@ -197,7 +197,6 @@ struct Tutorial : RTG::Application {
 	};
 	std::unordered_map< std::string, Camera > scene_cameras;
 	std::unordered_map< std::string, Camera >::iterator selected_scene_camera;
-	size_t selected_user_camera = 0;
 	
 	mat4 debug_CLIP_FROM_WORLD;
 	mat4 CLIP_FROM_WORLD;
