@@ -685,8 +685,8 @@ int Tutorial::load_scene(const std::string &filename) {
 			char *vertices = VertexStream::load(path).data(); // vertex data
 			auto &buffer = scene_vertices[path];
 			AABB aabb = AABB{
-				.min = glm::vec3(std::numeric_limits<float>::max()),
-				.max = glm::vec3(-std::numeric_limits<float>::max()),
+				.min = glm::vec3(FLT_MAX),
+				.max = glm::vec3(-FLT_MAX),
 			};
 			for (size_t i = 1; i < mesh.count; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
 				glm::vec3 pos = glm::vec3{
@@ -794,9 +794,6 @@ int Tutorial::load_scene(const std::string &filename) {
 
 		selected_scene_camera = it;
 	}
-
-	animation_positions.clear();
-	animation_positions.resize(s72.drivers.size(), 0);
 
 	for (auto &driver : s72.drivers) {
 		for (auto d_time : driver.times) {
@@ -1259,55 +1256,109 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 }
 
 
-void Tutorial::update(float dt) {
-	time = std::fmod(time + dt, 60.f);
+bool Tutorial::cull_frustrum(glm::vec3 frustrum[8], glm::vec3 bbox[8]) {
+	glm::vec3 frustrum_normals[5] = {
+		glm::normalize(glm::cross(frustrum[0] - frustrum[1], frustrum[2] - frustrum[1])), // frustrum forward
+		glm::normalize(glm::cross(frustrum[0] - frustrum[1], frustrum[4] - frustrum[1])), // frustrum bottom
+		glm::normalize(glm::cross(frustrum[0] - frustrum[2], frustrum[4] - frustrum[2])), // frustrum left
+		glm::normalize(glm::cross(frustrum[3] - frustrum[1], frustrum[6] - frustrum[1])), // frustrum right
+		glm::normalize(glm::cross(frustrum[3] - frustrum[2], frustrum[6] - frustrum[2])), // frustrum top
+	};
 
-	if (!pause_animation) {
-		animation_time = std::clamp(animation_time + (float)animation_step * dt, 0.f, max_animation_time);
-		for (size_t i = 0; i < animation_positions.size(); ++i) {
-			auto &driver = s72.drivers[i];
-			auto &pos = animation_positions[i];
+	// first check with frustrum plane normals
+	for (size_t i = 0; i < 5; ++i) {
+		glm::vec3 const &f = frustrum_normals[i];
+		float min_f = FLT_MAX, max_f = -FLT_MAX;
+		float min_b = FLT_MAX, max_b = -FLT_MAX;
 
-			pos = std::clamp(pos, 0, (int)driver.times.size() - 1);
-			int next_pos = std::clamp(pos + animation_step, 0, (int)driver.times.size() - 1);
+		for (size_t k = 0; k < 8; ++k) {
+			glm::vec3 const &v = frustrum[k];
+			float d = glm::dot(f, v);
+			min_f = std::min(min_f, d);
+			max_f = std::max(max_f, d);
+		}
 
-			float t_a = driver.times[pos];
-			float t_b = driver.times[next_pos];
-			float t = pos != next_pos ? (animation_time - t_a) / (t_b - t_a) : (float)((1 + animation_step) >> 1);
+		for (size_t k = 0; k < 8; ++k) {
+			glm::vec3 const &v = bbox[k];
+			float d = glm::dot(f, v);
+			min_b = std::min(min_b, d);
+			max_b = std::max(max_b, d);
+		}
 
-			auto interp = [interp_mode=driver.interpolation](const glm::vec4 &a, const glm::vec4 &b, const float &t) -> glm::vec4 {
-				if (interp_mode == S72::Driver::Interpolation::LINEAR) {
-					return glm::mix(a, b, t);
-				} else if (interp_mode == S72::Driver::Interpolation::SLERP) {
-					glm::quat d = glm::slerp(glm::quat(a), glm::quat(b), t);
-					return glm::vec4(d.x, d.y, d.z, d.w);
-				} else if (interp_mode == S72::Driver::Interpolation::STEP) {
-					return a;
-				}
+		if (max_f < min_b || max_b < min_f) return true;
+	}
 
-				return {};
-			};
+	// then with box normals == box edges
+	glm::vec3 bbox_edges[3] = {
+		glm::normalize(bbox[1] - bbox[0]), // bbox x normal
+		glm::normalize(bbox[3] - bbox[0]), // bbox y normal
+		glm::normalize(bbox[4] - bbox[0]), // bbox z normal
+	};
 
-			if (driver.channel == S72::Driver::Channel::translation){
-				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
-				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
-				driver.node.translation = glm::mix(a, b, t);
-			} else if (driver.channel == S72::Driver::Channel::rotation) {
-				glm::quat a = glm::quat(driver.values[4*pos], driver.values[4*pos+1], driver.values[4*pos+2], driver.values[4*pos+3]);
-				glm::quat b = glm::quat(driver.values[4*next_pos], driver.values[4*next_pos+1], driver.values[4*next_pos+2], driver.values[4*next_pos+3]);
-				driver.node.rotation = glm::slerp(a, b, t);
-			} else if (driver.channel == S72::Driver::Channel::scale) {
-				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
-				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
-				driver.node.scale = glm::mix(a, b, t);
-			}			
+	for (size_t i = 0; i < 3; ++i) {
+		auto const &b = bbox_edges[i];
+		float min_f = FLT_MAX, max_f = -FLT_MAX;
+		float min_b = FLT_MAX, max_b = -FLT_MAX;
 
-			if ((driver.times[next_pos] <= animation_time) && (animation_step == 1) ||
-				(driver.times[next_pos] >= animation_time) && (animation_step == -1)) {
-				pos = next_pos;
+		for (size_t k = 0; k < 8; ++k) {
+			glm::vec3 const &v = frustrum[k];
+			float d = glm::dot(b, v);
+			min_f = std::min(min_f, d);
+			max_f = std::max(max_f, d);
+		}
+
+		for (size_t k = 0; k < 8; ++k) {
+			glm::vec3 const &v = bbox[k];
+			float d = glm::dot(b, v);
+			min_b = std::min(min_b, d);
+			max_b = std::max(max_b, d);
+		}
+
+		if (max_f < min_b || max_b < min_f) return true;
+	}
+
+	// then cross of frustrum edges and bbox edges
+	glm::vec3 frustrum_edges[6] = {
+		glm::normalize(frustrum[0] - frustrum[1]),
+		glm::normalize(frustrum[2] - frustrum[1]),
+		glm::normalize(frustrum[4] - frustrum[0]),
+		glm::normalize(frustrum[5] - frustrum[1]),
+		glm::normalize(frustrum[6] - frustrum[2]),
+		glm::normalize(frustrum[7] - frustrum[3]),
+	};
+
+	for (size_t i = 0; i < 6; ++i) {
+		auto const &f = frustrum_edges[i];
+		for (size_t j = 0; j < 3; ++j) {
+			auto const &b = bbox_edges[j];
+			glm::vec3 c = glm::cross(f, b);
+			glm::vec3 n = glm::length(c) < .0001f ? f : glm::normalize(c);
+			float min_f = FLT_MAX, max_f = -FLT_MAX;
+			float min_b = FLT_MAX, max_b = -FLT_MAX;
+
+			for (size_t k = 0; k < 8; ++k) {
+				glm::vec3 const &v = frustrum[k];
+				float d = glm::dot(n, v);
+				min_f = std::min(min_f, d);
+				max_f = std::max(max_f, d);
 			}
+
+			for (size_t k = 0; k < 8; ++k) {
+				glm::vec3 const &v = bbox[k];
+				float d = glm::dot(n, v);
+				min_b = std::min(min_b, d);
+				max_b = std::max(max_b, d);
+			}
+
+			if (max_f < min_b || max_b < min_f) return true;
 		}
 	}
+
+	return false;
+};
+
+void Tutorial::update(float dt) {
+	time = std::fmod(time + dt, 60.f);
 
 	if (camera_mode == CameraMode::Scene) {
 		 //camera rotating around the origin:
@@ -1360,108 +1411,51 @@ void Tutorial::update(float dt) {
 		parse_scene_graph();
 	}
 
+	if (!pause_animation) {
+		animation_time = std::clamp(animation_time + (float)animation_step * dt, 0.f, max_animation_time);
+		
+		for (size_t j = 0; j < s72.drivers.size(); ++j) {
+			size_t i = animation_step == 1 ? j : s72.drivers.size() - 1 - j;
+			auto &driver = s72.drivers[i];
+
+			auto it = std::upper_bound(driver.times.begin(), driver.times.end(), animation_time);
+			int next_pos = std::min((int)std::distance(driver.times.begin(), it), (int)driver.times.size() - 1);
+			int pos = std::max(next_pos - 1, 0);
+
+			float t_a = driver.times[pos];
+			float t_b = driver.times[next_pos];
+			float t = pos == next_pos ? 0.f : std::clamp((animation_time - t_a) / (t_b - t_a), 0.f, 1.f);
+
+			auto interp = [interp_mode=driver.interpolation](const glm::vec4 &a, const glm::vec4 &b, const float &t) -> glm::vec4 {
+				if (interp_mode == S72::Driver::Interpolation::LINEAR) {
+					return glm::mix(a, b, t);
+				} else if (interp_mode == S72::Driver::Interpolation::SLERP) {
+					glm::quat d = glm::slerp(glm::quat(a), glm::quat(b), t);
+					return glm::vec4(d.x, d.y, d.z, d.w);
+				} else if (interp_mode == S72::Driver::Interpolation::STEP) {
+					return a;
+				}
+
+				return {};
+			};
+
+			if (driver.channel == S72::Driver::Channel::translation){
+				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
+				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
+				driver.node.translation = glm::mix(a, b, t);
+			} else if (driver.channel == S72::Driver::Channel::rotation) {
+				glm::quat a = glm::normalize(glm::quat(driver.values[4*pos], driver.values[4*pos+1], driver.values[4*pos+2], driver.values[4*pos+3]));
+				glm::quat b = glm::normalize(glm::quat(driver.values[4*next_pos], driver.values[4*next_pos+1], driver.values[4*next_pos+2], driver.values[4*next_pos+3]));
+				driver.node.rotation = glm::slerp(a, b, t);
+			} else if (driver.channel == S72::Driver::Channel::scale) {
+				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
+				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
+				driver.node.scale = glm::mix(a, b, t);
+			}			
+		}
+	}
+
 	{ // compile objects to draw -- objects to be pruned here
-
-		auto cull_frustrum = [](glm::vec4 frustrum[8], glm::vec4 bbox[8]) -> bool {
-			glm::vec3 frustrum_normals[5] = {
-				glm::normalize(glm::cross(glm::vec3(frustrum[0] - frustrum[1]), glm::vec3(frustrum[2] - frustrum[1]))), // frustrum forward
-				glm::normalize(glm::cross(glm::vec3(frustrum[0] - frustrum[1]), glm::vec3(frustrum[4] - frustrum[1]))), // frustrum bottom
-				glm::normalize(glm::cross(glm::vec3(frustrum[0] - frustrum[2]), glm::vec3(frustrum[4] - frustrum[2]))), // frustrum left
-				glm::normalize(glm::cross(glm::vec3(frustrum[3] - frustrum[1]), glm::vec3(frustrum[6] - frustrum[1]))), // frustrum right
-				glm::normalize(glm::cross(glm::vec3(frustrum[3] - frustrum[2]), glm::vec3(frustrum[6] - frustrum[2]))), // frustrum top
-			};
-
-			// first check with frustrum plane normals
-			for (size_t i = 0; i < 5; ++i) {
-				glm::vec3 const &f = frustrum_normals[i];
-				float min_f = FLT_MAX, max_f = -FLT_MAX;
-				float min_b = FLT_MAX, max_b = -FLT_MAX;
-
-				for (size_t k = 0; k < 8; ++k) {
-					glm::vec3 const &v = frustrum[k];
-					float d = glm::dot(f, v);
-					min_f = std::min(min_f, d);
-					max_f = std::max(max_f, d);
-				}
-
-				for (size_t k = 0; k < 8; ++k) {
-					glm::vec3 const &v = bbox[k];
-					float d = glm::dot(f, v);
-					min_b = std::min(min_b, d);
-					max_b = std::max(max_b, d);
-				}
-
-				if (max_f < min_b || max_b < min_f) return true;
-			}
-
-			// then with box normals == box edges
-			glm::vec3 bbox_edges[3] = {
-				glm::normalize(glm::vec3(bbox[1] - bbox[0])), // bbox x normal
-				glm::normalize(glm::vec3(bbox[3] - bbox[0])), // bbox y normal
-				glm::normalize(glm::vec3(bbox[4] - bbox[0])), // bbox z normal
-			};
-
-			for (size_t i = 0; i < 3; ++i) {
-				auto const &b = bbox_edges[i];
-				float min_f = FLT_MAX, max_f = -FLT_MAX;
-				float min_b = FLT_MAX, max_b = -FLT_MAX;
-
-				for (size_t k = 0; k < 8; ++k) {
-					glm::vec3 const &v = frustrum[k];
-					float d = glm::dot(b, v);
-					min_f = std::min(min_f, d);
-					max_f = std::max(max_f, d);
-				}
-
-				for (size_t k = 0; k < 8; ++k) {
-					glm::vec3 const &v = bbox[k];
-					float d = glm::dot(b, v);
-					min_b = std::min(min_b, d);
-					max_b = std::max(max_b, d);
-				}
-
-				if (max_f < min_b || max_b < min_f) return true;
-			}
-
-			// then cross of frustrum edges and bbox edges
-			glm::vec3 frustrum_edges[6] = {
-				glm::normalize(glm::vec3(frustrum[0] - frustrum[1])),
-				glm::normalize(glm::vec3(frustrum[2] - frustrum[1])),
-				glm::normalize(glm::vec3(frustrum[4] - frustrum[0])),
-				glm::normalize(glm::vec3(frustrum[5] - frustrum[1])),
-				glm::normalize(glm::vec3(frustrum[6] - frustrum[2])),
-				glm::normalize(glm::vec3(frustrum[7] - frustrum[3])),
-			};
-
-			for (size_t i = 0; i < 6; ++i) {
-				auto const &f = frustrum_edges[i];
-				for (size_t j = 0; j < 3; ++j) {
-					auto const &b = bbox_edges[j];
-					glm::vec3 c = glm::cross(f, b);
-					glm::vec3 n = glm::length(c) < .0001f ? f : glm::normalize(c);
-					float min_f = FLT_MAX, max_f = -FLT_MAX;
-					float min_b = FLT_MAX, max_b = -FLT_MAX;
-
-					for (size_t k = 0; k < 8; ++k) {
-						glm::vec3 const &v = frustrum[k];
-						float d = glm::dot(n, v);
-						min_f = std::min(min_f, d);
-						max_f = std::max(max_f, d);
-					}
-
-					for (size_t k = 0; k < 8; ++k) {
-						glm::vec3 const &v = bbox[k];
-						float d = glm::dot(n, v);
-						min_b = std::min(min_b, d);
-						max_b = std::max(max_b, d);
-					}
-
-					if (max_f < min_b || max_b < min_f) return true;
-				}
-			}
-
-			return false;
-		};
 
 		// clear drawables
 		lines_vertices.clear(); 
@@ -1475,20 +1469,20 @@ void Tutorial::update(float dt) {
 
 			glm::mat4 WORLD_FROM_LOCAL = glm::make_mat4(inst.transform.WORLD_FROM_LOCAL.data());
 			Tutorial::AABB aabb = aabbs[inst.buffer];
-			glm::vec4 bbox[8] = {
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.min.z, 1.f },
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.min.z, 1.f },
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.min.z, 1.f },
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.min.z, 1.f },
+			glm::vec3 bbox[8] = {
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.min.z, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.min.z, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.min.z, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.min.z, 1.f }),
 
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.max.z, 1.f },
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.max.z, 1.f },
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.max.z, 1.f },
-				WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.max.z, 1.f },
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.max.z, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.max.z, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.max.z, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.max.z, 1.f }),
 			};
 
 			// frustrum in clip space transformed to world
-			glm::vec4 frustrum[8] = {
+			glm::vec4 frustrum4[8] = {
 				WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f, 0.f,  1.f }, // near bl
 				WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f, 0.f,  1.f }, // near br
 				WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f, 0.f,  1.f }, // near tl
@@ -1499,8 +1493,10 @@ void Tutorial::update(float dt) {
 				WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f,  1.f,  1.f }, // far tl
 				WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f,  1.f,  1.f }, // far tr
 			};
+
+			glm::vec3 frustrum[8];
 			for (size_t i = 0; i < 8; ++i) {
-				frustrum[i] /= frustrum[i].w;
+				frustrum[i] = glm::vec3(frustrum4[i]) / frustrum4[i].w;
 			}
 
 			bool cull = false;
@@ -1519,11 +1515,11 @@ void Tutorial::update(float dt) {
 					// draw bottom face
 					for (size_t i = 0; i < 4; ++i) {
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = glm::vec3(bbox[i]),
+							.Position = bbox[i],
 							.Color = bbox_color
 						});
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = glm::vec3(bbox[(i+1) % 4]),
+							.Position = bbox[(i+1) % 4],
 							.Color = bbox_color
 						});
 					}
@@ -1531,11 +1527,11 @@ void Tutorial::update(float dt) {
 					// draw top face
 					for (size_t i = 0; i < 4; ++i) {
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = glm::vec3(bbox[4 + i]),
+							.Position = bbox[4 + i],
 							.Color = bbox_color
 						});
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = glm::vec3(bbox[4 + (i+1) % 4]),
+							.Position = bbox[4 + (i+1) % 4],
 							.Color = bbox_color
 						});
 					}
@@ -1543,11 +1539,11 @@ void Tutorial::update(float dt) {
 					// connect faces
 					for (size_t i = 0; i < 4; ++i) {
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = glm::vec3(bbox[i]),
+							.Position = bbox[i],
 							.Color = bbox_color
 						});
 						lines_vertices.emplace_back(PosColVertex{
-							.Position = glm::vec3(bbox[i+4]),
+							.Position = bbox[i+4],
 							.Color = bbox_color
 						});
 					}
@@ -1563,7 +1559,7 @@ void Tutorial::update(float dt) {
 		{ // draw frustrum
 			glm::mat4 debug_WORLD_FROM_CLIP = glm::inverse(glm::make_mat4(debug_CLIP_FROM_WORLD.data()));
 			// frustrum in clip space transformed to world
-			glm::vec4 frustrum[8] = {
+			glm::vec4 frustrum4[8] = {
 				debug_WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f, 0.f,  1.f }, // near bl
 				debug_WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f, 0.f,  1.f }, // near br
 				debug_WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f, 0.f,  1.f }, // near tl
@@ -1575,8 +1571,9 @@ void Tutorial::update(float dt) {
 				debug_WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f,  1.f,  1.f }, // far tr
 			};
 
+			glm::vec3 frustrum[8];
 			for (size_t i = 0; i < 8; ++i) {
-				frustrum[i] /= frustrum[i].w;
+				frustrum[i] = glm::vec3(frustrum4[i]) / frustrum4[i].w;
 			}
 
 			glm::u8vec4 frustrum_color = glm::u8vec4(255, 255, 0, 255);

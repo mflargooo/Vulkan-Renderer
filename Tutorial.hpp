@@ -239,9 +239,10 @@ struct Tutorial : RTG::Application {
 	int load_scene(const std::string &file);
 	void parse_scene_graph();
 
+	bool cull_frustrum(glm::vec3 frustrum[8], glm::vec3 bbox[8]);
+
 	float animation_time = 0.f;
 	float max_animation_time = 0.f;
-	std::vector< int > animation_positions;
 	int animation_step = 1;
 	bool pause_animation = false;
 
