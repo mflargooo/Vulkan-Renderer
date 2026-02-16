@@ -655,7 +655,8 @@ int Tutorial::load_scene(const std::string &filename) {
 				continue;
 			}
 
-			std::vector< char > vertices = VertexStream::load(df.path); // vertex data
+			std::vector< char > vertices; 
+			VertexStream::load(df.path, vertices); // vertex data
 
 			// allocate new buffer
 			Helpers::AllocatedBuffer buffer;
@@ -682,13 +683,14 @@ int Tutorial::load_scene(const std::string &filename) {
 			auto const &path = mesh.attributes.at("POSITION").src.path;
 			auto const &stride = mesh.attributes.at("POSITION").stride;
 			auto const &offset = mesh.attributes.at("POSITION").offset;
-			char *vertices = VertexStream::load(path).data(); // vertex data
+			std::vector< char > data;
+			char *vertices = VertexStream::load(path, data).data(); // vertex data
 			auto &buffer = scene_vertices[path];
 			AABB aabb = AABB{
 				.min = glm::vec3(FLT_MAX),
 				.max = glm::vec3(-FLT_MAX),
 			};
-			for (size_t i = 1; i < mesh.count; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
+			for (size_t i = 1; i < 36; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
 				glm::vec3 pos = glm::vec3{
 					*(float *)&vertices[i * stride + offset],
 					*(float *)&vertices[i * stride + offset + 4],
