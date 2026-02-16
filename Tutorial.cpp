@@ -793,6 +793,10 @@ int Tutorial::load_scene(const std::string &filename) {
 		}
 
 		selected_scene_camera = it;
+	} else if (scene_cameras.size() > 0) {
+		selected_scene_camera = scene_cameras.begin();
+	} else {
+		selected_scene_camera = scene_cameras.end();
 	}
 
 	for (auto &driver : s72.drivers) {
@@ -1360,6 +1364,54 @@ bool Tutorial::cull_frustrum(glm::vec3 frustrum[8], glm::vec3 bbox[8]) {
 void Tutorial::update(float dt) {
 	time = std::fmod(time + dt, 60.f);
 
+	if (!pause_animation) {
+		animation_time = std::clamp(animation_time + (float)animation_step * dt, 0.f, max_animation_time);
+		
+		for (size_t j = 0; j < s72.drivers.size(); ++j) {
+			size_t i = animation_step == 1 ? j : s72.drivers.size() - 1 - j;
+			auto &driver = s72.drivers[i];
+
+			auto it = std::upper_bound(driver.times.begin(), driver.times.end(), animation_time);
+			int next_pos = std::min((int)std::distance(driver.times.begin(), it), (int)driver.times.size() - 1);
+			int pos = std::max(next_pos - 1, 0);
+
+			float t_a = driver.times[pos];
+			float t_b = driver.times[next_pos];
+			float t = pos == next_pos ? 0.f : std::clamp((animation_time - t_a) / (t_b - t_a), 0.f, 1.f);
+
+			auto interp = [interp_mode=driver.interpolation](const glm::vec4 &a, const glm::vec4 &b, const float &t) -> glm::vec4 {
+				if (interp_mode == S72::Driver::Interpolation::LINEAR) {
+					return glm::mix(a, b, t);
+				} else if (interp_mode == S72::Driver::Interpolation::SLERP) {
+					glm::quat d = glm::slerp(glm::normalize(glm::quat(a.x, a.y, a.z, a.w)), glm::normalize(glm::quat(b.x, b.y, b.z, b.w)), t);
+					return glm::vec4(d.w, d.x, d.y, d.z);
+				} else if (interp_mode == S72::Driver::Interpolation::STEP) {
+					return a;
+				}
+				return {};
+			};
+
+			if (driver.channel == S72::Driver::Channel::translation){
+				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
+				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
+				driver.node.translation = interp(a, b, t);
+			} else if (driver.channel == S72::Driver::Channel::rotation) {
+				glm::vec4 a = glm::vec4(driver.values[4*pos], driver.values[4*pos+1], driver.values[4*pos+2], driver.values[4*pos+3]);
+				glm::vec4 b = glm::vec4(driver.values[4*next_pos], driver.values[4*next_pos+1], driver.values[4*next_pos+2], driver.values[4*next_pos+3]);
+				glm::vec4 r = interp(a, b, t);
+				driver.node.rotation = glm::quat(r.x, r.y, r.z, r.w);
+			} else if (driver.channel == S72::Driver::Channel::scale) {
+				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
+				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
+				driver.node.scale = interp(a, b, t);
+			}			
+		}
+	}
+
+	{ // iterate through scene graph
+		parse_scene_graph();
+	}
+
 	if (camera_mode == CameraMode::Scene) {
 		 //camera rotating around the origin:
 		auto scene_camera = selected_scene_camera->second;
@@ -1406,55 +1458,7 @@ void Tutorial::update(float dt) {
 			) * mat4_from_glm(glm::inverse(glm::make_mat4(scene_camera.transform.WORLD_FROM_LOCAL.data())));
 		}
 	}
-
-	{ // iterate through scene graph
-		parse_scene_graph();
-	}
-
-	if (!pause_animation) {
-		animation_time = std::clamp(animation_time + (float)animation_step * dt, 0.f, max_animation_time);
-		
-		for (size_t j = 0; j < s72.drivers.size(); ++j) {
-			size_t i = animation_step == 1 ? j : s72.drivers.size() - 1 - j;
-			auto &driver = s72.drivers[i];
-
-			auto it = std::upper_bound(driver.times.begin(), driver.times.end(), animation_time);
-			int next_pos = std::min((int)std::distance(driver.times.begin(), it), (int)driver.times.size() - 1);
-			int pos = std::max(next_pos - 1, 0);
-
-			float t_a = driver.times[pos];
-			float t_b = driver.times[next_pos];
-			float t = pos == next_pos ? 0.f : std::clamp((animation_time - t_a) / (t_b - t_a), 0.f, 1.f);
-
-			auto interp = [interp_mode=driver.interpolation](const glm::vec4 &a, const glm::vec4 &b, const float &t) -> glm::vec4 {
-				if (interp_mode == S72::Driver::Interpolation::LINEAR) {
-					return glm::mix(a, b, t);
-				} else if (interp_mode == S72::Driver::Interpolation::SLERP) {
-					glm::quat d = glm::slerp(glm::quat(a), glm::quat(b), t);
-					return glm::vec4(d.x, d.y, d.z, d.w);
-				} else if (interp_mode == S72::Driver::Interpolation::STEP) {
-					return a;
-				}
-
-				return {};
-			};
-
-			if (driver.channel == S72::Driver::Channel::translation){
-				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
-				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
-				driver.node.translation = glm::mix(a, b, t);
-			} else if (driver.channel == S72::Driver::Channel::rotation) {
-				glm::quat a = glm::normalize(glm::quat(driver.values[4*pos], driver.values[4*pos+1], driver.values[4*pos+2], driver.values[4*pos+3]));
-				glm::quat b = glm::normalize(glm::quat(driver.values[4*next_pos], driver.values[4*next_pos+1], driver.values[4*next_pos+2], driver.values[4*next_pos+3]));
-				driver.node.rotation = glm::slerp(a, b, t);
-			} else if (driver.channel == S72::Driver::Channel::scale) {
-				glm::vec4 a = glm::vec4(driver.values[3*pos], driver.values[3*pos+1], driver.values[3*pos+2], 0);
-				glm::vec4 b = glm::vec4(driver.values[3*next_pos], driver.values[3*next_pos+1], driver.values[3*next_pos+2], 0);
-				driver.node.scale = glm::mix(a, b, t);
-			}			
-		}
-	}
-
+	
 	{ // compile objects to draw -- objects to be pruned here
 
 		// clear drawables
@@ -1627,7 +1631,7 @@ void Tutorial::on_input(InputEvent const &evt) {
 
 	// general ctrls
 	if (evt.type == InputEvent::KeyDown) {
-		if (evt.key.key == GLFW_KEY_TAB && camera_mode != CameraMode::Debug) {
+		if (evt.key.key == GLFW_KEY_TAB && camera_mode != CameraMode::Debug && scene_cameras.size() > 0) {
 			// switch cam modes
 			int dir = (evt.key.mods & GLFW_MOD_SHIFT) ? -1 : 1;
 			camera_mode = CameraMode((int(camera_mode) + dir + 2) % 2);
