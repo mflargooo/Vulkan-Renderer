@@ -13,7 +13,7 @@ int main(int argc, char **argv) {
 		RTG::Configuration configuration;
 
 		configuration.application_info = VkApplicationInfo{
-			.pApplicationName = "nakluV Tutorial",
+			.pApplicationName = "Scene Viewer",
 			.applicationVersion = VK_MAKE_VERSION(0,0,0),
 			.pEngineName = "Unknown",
 			.engineVersion = VK_MAKE_VERSION(0,0,0),

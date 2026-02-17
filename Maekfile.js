@@ -62,7 +62,7 @@ const objects_shaders = [
 ];
 main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
-const main_exe = maek.LINK([...main_objs], 'bin/main');
+const main_exe = maek.LINK([...main_objs], 'bin/viewer');
 
 //default targets:
 maek.TARGETS = [main_exe];

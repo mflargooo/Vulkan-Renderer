@@ -1373,6 +1373,7 @@ void Tutorial::update(float dt) {
 			size_t i = animation_step == 1 ? j : s72.drivers.size() - 1 - j;
 			auto &driver = s72.drivers[i];
 
+			// https://cplusplus.com/reference/algorithm/upper_bound/
 			auto it = std::upper_bound(driver.times.begin(), driver.times.end(), animation_time);
 			int next_pos = std::min((int)std::distance(driver.times.begin(), it), (int)driver.times.size() - 1);
 			int pos = std::max(next_pos - 1, 0);
