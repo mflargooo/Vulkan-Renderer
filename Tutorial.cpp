@@ -1092,7 +1092,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 	{ // render pass
 		std::array< VkClearValue, 2 > clear_values {
-			VkClearValue{ .color{ .float32{.5f, .25f, 1.f, 1.f} } },
+			VkClearValue{ .color{ .float32{0.f, 0.f, 0.f, 1.f} } },
 			VkClearValue{ .depthStencil{ .depth = 1.f, .stencil = 0 } },
 		};
 
