@@ -84,7 +84,9 @@ function custom_flags_and_rules() {
 		maek.options.CPPFlags = [
 			'-O2',
 			`-I${VULKAN_SDK}/include`,
-			`-I${GLFW_DIR}/include`
+			`-I${GLFW_DIR}/include`,
+			`-I./external/glm`,
+			`-I./external/s72`,
 		];
 
 		maek.options.LINKLibs = [
@@ -93,7 +95,7 @@ function custom_flags_and_rules() {
 			`-lvulkan`,
 			`-L${GLFW_DIR}/lib`,
 			'-lX11',
-			`-lglfw3`,
+			`-lglfw`,
 		];
 
 	} else if (maek.OS === 'windows') {

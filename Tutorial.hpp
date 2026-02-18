@@ -195,8 +195,8 @@ struct Tutorial : RTG::Application {
 		float near;
 		float far;
 	};
-	std::unordered_map< std::string, Camera > scene_cameras;
-	std::unordered_map< std::string, Camera >::iterator selected_scene_camera;
+	std::map< std::string, Camera > scene_cameras;
+	std::map< std::string, Camera >::iterator selected_scene_camera;
 	
 	mat4 debug_CLIP_FROM_WORLD;
 	mat4 CLIP_FROM_WORLD;
