@@ -588,6 +588,30 @@ Viewer::~Viewer() {
 		std::cerr << "Failed to vkDeviceWaitIdle in Viewer::~Viewer [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
 
+	if (cubemap_descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, cubemap_descriptor_pool, nullptr);
+		cubemap_descriptor_pool = nullptr;
+		
+		// this also frees descriptor sets allocated from pool
+		cubemap_descriptors.clear();
+	}
+
+	if (cubemap_sampler) {
+		vkDestroySampler(rtg.device, cubemap_sampler, nullptr);
+		cubemap_sampler = VK_NULL_HANDLE;
+	}
+
+	for (VkImageView &view : cubemap_views) {
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	cubemap_views.clear();
+
+	for (auto &cubemap : cubemaps) {
+		rtg.helpers.destroy_cubemap(std::move(cubemap));
+	}
+	cubemaps.clear();
+
 	if (texture_descriptor_pool) {
 		vkDestroyDescriptorPool(rtg.device, texture_descriptor_pool, nullptr);
 		texture_descriptor_pool = nullptr;
@@ -1420,6 +1444,9 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					1, &cubemap_descriptors[0], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
+
+				// push material type
+				vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(uint32_t), &inst->material);
 
 				vkCmdDraw(workspace.command_buffer, inst->vertices.count, 1, inst->vertices.first, index);
 			}

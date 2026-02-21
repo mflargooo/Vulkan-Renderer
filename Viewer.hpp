@@ -50,8 +50,10 @@ struct Viewer : RTG::Application {
 		// types for descriptors
 		struct Camera {
 			glm::mat4 CLIP_FROM_WORLD;
+			glm::vec3 EYE_WORLD;
+			float padding_;
 		};
-		static_assert(sizeof(Camera) == 16*4, "camera buffer structure is packed.");
+		static_assert(sizeof(Camera) == 16*4 + 4*3 + 4, "camera buffer structure is packed.");
 
 		// no push constants
 
@@ -148,12 +150,11 @@ struct Viewer : RTG::Application {
 	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;
 	std::vector< VkDescriptorSet > texture_descriptors; // allocated from texture_descriptor_pool
 
-
 	std::vector< Helpers::AllocatedImage > cubemaps;
 	std::vector< VkImageView > cubemap_views;
 	VkSampler cubemap_sampler = VK_NULL_HANDLE;
 	VkDescriptorPool cubemap_descriptor_pool = VK_NULL_HANDLE;
-	std::vector< VkDescriptorSet > cubemap_descriptors; // allocated from texture_descriptor_pool
+	std::vector< VkDescriptorSet > cubemap_descriptors; // allocated from cubemap_descriptor_pool
 
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:
@@ -225,6 +226,7 @@ struct Viewer : RTG::Application {
 		Helpers::AllocatedBuffer *buffer = nullptr;
 		ObjectsPipeline::Transform transform;
 		uint32_t texture = 0;
+		uint32_t material = 0; // 0 - lambert, 1 - mirror
 	};
 	std::vector< ObjectInstance > object_instances;
 
