@@ -73,6 +73,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_TEXTURE) );
     }
 
+    // MOVE THIS TO SEPARATE LIGHT PIPELINE AS SHARED DESCRIPTOR, AS GLOBAL SHARED INFORMATION
     { // the set3_CUBEMAPS layout has a single descriptor for a sampler2D used in the fragment shader
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
             VkDescriptorSetLayoutBinding{

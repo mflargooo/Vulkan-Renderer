@@ -24,7 +24,7 @@
 #include <algorithm>
 
 // for environment
-#include "cubemap.hpp"
+#include "rgbe.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
@@ -497,16 +497,16 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		assert(cubemap_views.size() == cubemaps.size());
 	}
 
-	{ // make a sampler for the textures
+	{ // make a sampler for the cubemaps
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 			.flags = 0,
-			.magFilter = VK_FILTER_NEAREST,
-			.minFilter = VK_FILTER_NEAREST,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
 			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 			.mipLodBias = 0.f,
 			.anisotropyEnable  = VK_FALSE,
 			.maxAnisotropy = 0.f,
@@ -520,7 +520,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &cubemap_sampler) );
 	}
 
-	{ // create the texture descriptor pool
+	{ // create the cubemap descriptor pool
 		uint32_t per_cubemap = uint32_t(cubemaps.size()); // for easier to read counting
 
 		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
@@ -833,6 +833,7 @@ int Viewer::load_scene(const std::string &filename) {
 			if (rtg.configuration.debug) std::cerr << "[TEXTURE] " << texture.src << std::endl;
 			int x = 0, y = 0, c = 0;
 			stbi_set_flip_vertically_on_load(true);
+			// stbi loads with 8 bit channels, hence static 32 bits chosen
 			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
 			uint32_t width = (uint32_t)x, height = (uint32_t)y;
 
@@ -853,8 +854,8 @@ int Viewer::load_scene(const std::string &filename) {
 						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 						Helpers::Unmapped
 					));
-
-					rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+					
+					rtg.helpers.transfer_to_image(tex, sizeof(uint32_t) * x * y, textures.back());
 
 				} else if (texture.type == S72::Texture::Type::cube) {
 					height = width; // assume always vertical strip, for now
@@ -863,14 +864,28 @@ int Viewer::load_scene(const std::string &filename) {
 					cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
 					cubemaps.emplace_back(rtg.helpers.create_cubemap(
 						VkExtent2D{ .width = width, .height = height },
-						VK_FORMAT_R8G8B8A8_UNORM, // change after converting data to appropriate format
+						VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
 						VK_IMAGE_TILING_OPTIMAL,
 						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 						Helpers::Unmapped
 					));
 
-					rtg.helpers.transfer_to_cubemap(tex, sizeof(tex[0]) * x * y, cubemaps.back());
+					std::vector< uint64_t > pixels;
+					pixels.reserve(x * y);
+					for (size_t i = 0; i < x * y; ++i) {
+						uint32_t pixel = tex[i];
+
+						glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
+							 pixel        & 0xff,
+							(pixel >>  8) & 0xff,
+							(pixel >> 16) & 0xff,
+							(pixel >> 24) & 0xff
+						));
+
+						pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
+					}
+					rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
 				}
 
 				stbi_image_free(tex);
@@ -1365,6 +1380,16 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					objects_pipeline.layout, // pipeline layout
 					2, // second set
 					1, &texture_descriptors[inst->texture], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
+				// bind cubemap descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					3, // second set
+					1, &cubemap_descriptors[0], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 
