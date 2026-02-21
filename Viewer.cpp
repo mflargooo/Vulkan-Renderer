@@ -23,6 +23,9 @@
 #include <limits>
 #include <algorithm>
 
+// for environment
+#include "cubemap.hpp"
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
 
@@ -691,7 +694,7 @@ int Viewer::load_scene(const std::string &filename) {
 				.min = glm::vec3(FLT_MAX),
 				.max = glm::vec3(-FLT_MAX),
 			};
-			for (size_t i = 1; i < 36; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
+			for (size_t i = 1; i < mesh.count; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
 				glm::vec3 pos = glm::vec3{
 					*(float *)&vertices[i * stride + offset],
 					*(float *)&vertices[i * stride + offset + 4],
@@ -712,25 +715,47 @@ int Viewer::load_scene(const std::string &filename) {
 			int x = 0, y = 0, c = 0;
 			stbi_set_flip_vertically_on_load(true);
 			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
+			
+			VkImageCreateFlags flags = 0;
+			VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+			uint32_t width = (uint32_t)x, height = (uint32_t)y;
 
 			if (tex) {
-				VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
-				if (texture.format == S72::Texture::Format::linear) {
+				if (texture.type == S72::Texture::Type::flat) {
+					if (texture.format == S72::Texture::Format::linear) {
+						format = VK_FORMAT_R8G8B8A8_UNORM;
+					}
+
+				} else if (texture.type == S72::Texture::Type::cube) {
+					flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 					format = VK_FORMAT_R8G8B8A8_UNORM;
+					height = width; // assume always vertical strip, for now
 				}
 
 				// track index of texture
 				tex_ids.insert({ texture.path, (uint32_t)textures.size() });
 				textures.emplace_back(rtg.helpers.create_image(
-					VkExtent2D{ .width = (uint32_t)x, .height = (uint32_t)y },
+					VkExtent2D{ .width = width, .height = height },
 					format,
 					VK_IMAGE_TILING_OPTIMAL,
 					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					Helpers::Unmapped
+					Helpers::Unmapped,
+					flags
 				));
 
-				rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+				if (texture.type == S72::Texture::Type::flat) {
+					rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+				} else if (texture.type == S72::Texture::Type::cube) {
+					if (rtg.configuration.debug) std::cout << "[TEXTURE] Handling cubemap " << texture.src << std::endl;
+					Cubemap::transfer_vertical_strip_to_image(
+						rtg, 
+						tex, 
+						sizeof(tex[0]) * x * y, 
+						textures.back(), 
+						{ .width = width, .height = height }
+					);
+				}
 
 				stbi_image_free(tex);
 			} else {

@@ -112,14 +112,15 @@ void Helpers::destroy_buffer(AllocatedBuffer &&buffer) {
 	this ->free(std::move(buffer.allocation));
 }
 
-
-Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map) {
+Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map, VkImageCreateFlags flags) {
 	AllocatedImage image;
 	image.extent = extent;
 	image.format = format;
 
+	uint32_t layers = flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT ? 6 : 1;
 	VkImageCreateInfo create_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.flags = flags,
 		.imageType = VK_IMAGE_TYPE_2D,
 		.format = format,
 		.extent{
@@ -128,7 +129,7 @@ Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat
 			.depth = 1
 		},
 		.mipLevels = 1,
-		.arrayLayers = 1,
+		.arrayLayers = layers,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = tiling,
 		.usage = usage,
@@ -205,7 +206,7 @@ void Helpers::transfer_to_buffer(void const *data, size_t size, AllocatedBuffer 
 	destroy_buffer(std::move(transfer_src));
 }
 
-void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target) {
+void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target, uint32_t base_array_layer) {
 	assert(target.handle != VK_NULL_HANDLE); // target img should be alloced alr
 	
 	// check data is right size
@@ -238,7 +239,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.baseMipLevel = 0,
 		.levelCount = 1,
-		.baseArrayLayer = 0,
+		.baseArrayLayer = base_array_layer,
 		.layerCount = 1,
 	};
 
