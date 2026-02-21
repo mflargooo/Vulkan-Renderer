@@ -704,6 +704,13 @@ int Viewer::load_scene(const std::string &filename) {
 				aabb.max = glm::max(aabb.max, pos);
 			}
 
+			for (glm::length_t i = 0; i < 3; ++i) {
+				if (std::abs(aabb.max[i] - aabb.min[i]) < .00001f) {
+					aabb.min[i] -= .000005f;
+					aabb.max[i] += .000005f;
+				}
+			}
+
 			// for now, index by buffer, later by mesh
 			aabbs.insert({ &buffer, std::move(aabb) });
 		}
