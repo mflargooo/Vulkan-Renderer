@@ -50,10 +50,8 @@ struct Viewer : RTG::Application {
 		// types for descriptors
 		struct Camera {
 			glm::mat4 CLIP_FROM_WORLD;
-			glm::vec3 EYE_WORLD;
-			float padding_;
 		};
-		static_assert(sizeof(Camera) == 16*4 + 4*3 + 4, "camera buffer structure is packed.");
+		static_assert(sizeof(Camera) == 16*4, "camera buffer structure is packed.");
 
 		// no push constants
 
@@ -71,8 +69,9 @@ struct Viewer : RTG::Application {
 		// descriptor set layouts
 		VkDescriptorSetLayout set0_World = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
-		VkDescriptorSetLayout set2_TEXTURE = VK_NULL_HANDLE;
-		VkDescriptorSetLayout set3_CUBEMAPS = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set2_Camera = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set3_TEXTURE = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set4_CUBEMAPS = VK_NULL_HANDLE;
 
 		// types for descriptors
 		struct World {
@@ -240,6 +239,7 @@ struct Viewer : RTG::Application {
 	std::unordered_map< std::string, uint32_t > cubemap_ids;
 	
 	struct Material {
+		uint32_t type;
 		int albedo_id; // always exists
 		int normal_id; // may not exist
 		int displacement_id; // may not exist

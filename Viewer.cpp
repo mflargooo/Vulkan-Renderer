@@ -435,7 +435,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 			.descriptorPool = texture_descriptor_pool,
 			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set2_TEXTURE,
+			.pSetLayouts = &objects_pipeline.set3_TEXTURE,
 		};
 		texture_descriptors.assign(textures.size(), VK_NULL_HANDLE);
 		for (VkDescriptorSet &descriptor_set : texture_descriptors) {
@@ -547,7 +547,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 			.descriptorPool = cubemap_descriptor_pool,
 			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set3_CUBEMAPS,
+			.pSetLayouts = &objects_pipeline.set4_CUBEMAPS,
 		};
 		cubemap_descriptors.assign(cubemaps.size(), VK_NULL_HANDLE);
 		for (VkDescriptorSet &descriptor_set : cubemap_descriptors) {
@@ -958,41 +958,42 @@ int Viewer::load_scene(const std::string &filename) {
 			int displacement_id = -1;
 
 			// for now we assume lambertian
-			auto p_brdf = std::get_if<S72::Material::Lambertian>(&material.brdf);
-			if (!p_brdf) {
-				std::cerr << "Skipping material \'" << material.name << "\' since it is not Lambertian." << std::endl;
-				continue;
+			if (auto p_lamb = std::get_if<S72::Material::Lambertian>(&material.brdf)) {
+				S72::Material::Lambertian lamb = *p_lamb;
+				// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
+				if (auto p_albedo = std::get_if<glm::vec3>(&lamb.albedo)) {
+					glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
+					// simple monocolor texture
+					uint32_t size = 128;
+					std::vector< glm::u8vec4 > data(size * size, albedo);
+					assert(data.size() == size * size);
+
+					albedo_id = (int)textures.size();
+					// make place for tex to live on GPU
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = size, .height = size }, // size of img
+						VK_FORMAT_R8G8B8A8_UNORM, // how to interpret image data
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+						Helpers::Unmapped
+					));
+
+					// transfer data
+					rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+				} else if (auto p_texture = std::get_if<S72::Texture *>(&lamb.albedo)) {
+					albedo_id = (int)tex_ids[(*p_texture)->path];
+				}
+
+				if (material.normal_map) normal_id = (int)tex_ids[material.normal_map->path];	
+				if (material.displacement_map) displacement_id = (int)tex_ids[material.displacement_map->path];
+
+				materials.insert({ material.name, Material{ .type = 0, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id } });
+			} else if (auto p_mirror = std::get_if<S72::Material::Mirror>(&material.brdf)) {
+				materials.insert({ material.name, Material{ .type = 1 }});
+			} else if (auto p_env = std::get_if<S72::Material::Environment>(&material.brdf)) {
+				materials.insert({ material.name, Material{ .type = 3 }});
 			}
-			S72::Material::Lambertian lamb = *p_brdf;
-			// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
-			if (auto p_albedo = std::get_if<glm::vec3>(&lamb.albedo)) {
-				glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
-				// simple monocolor texture
-				uint32_t size = 128;
-				std::vector< glm::u8vec4 > data(size * size, albedo);
-				assert(data.size() == size * size);
-
-				albedo_id = (int)textures.size();
-				// make place for tex to live on GPU
-				textures.emplace_back(rtg.helpers.create_image(
-					VkExtent2D{ .width = size, .height = size }, // size of img
-					VK_FORMAT_R8G8B8A8_UNORM, // how to interpret image data
-					VK_IMAGE_TILING_OPTIMAL,
-					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
-					Helpers::Unmapped
-				));
-
-				// transfer data
-				rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-			} else if (auto p_texture = std::get_if<S72::Texture *>(&lamb.albedo)) {
-				albedo_id = (int)tex_ids[(*p_texture)->path];
-			}
-
-			if (material.normal_map) normal_id = (int)tex_ids[material.normal_map->path];	
-			if (material.displacement_map) displacement_id = (int)tex_ids[material.displacement_map->path];
-
-			materials.insert({ material.name, Material{ .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id } });
 		}
 	}
 
@@ -1060,6 +1061,7 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			if (node->mesh->material) {
 				material = materials[node->mesh->material->name];
 			}
+
 			// create object instance
 			object_instances.emplace_back(ObjectInstance{
 				.vertices{
@@ -1073,6 +1075,7 @@ void Viewer::parse_scene_graph() { // populate all object instances
 					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(xf)),
 				},
 				.texture = uint32_t(material.albedo_id),
+				.material = material.type,
 			});
 		} else if (node->camera) {
 			// if (rtg.configuration.debug) std::cerr << "[CAMERA] " << node->camera->name << " located at " << glm::to_string(xf) << std::endl; 
@@ -1173,7 +1176,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 	{ // upload cam info
 		LinesPipeline::Camera camera{
-			.CLIP_FROM_WORLD = CLIP_FROM_WORLD
+			.CLIP_FROM_WORLD = CLIP_FROM_WORLD,
 		};
 		assert(workspace.Camera_src.size == sizeof(camera));
 
@@ -1404,10 +1407,11 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
 
-			{ // bind World and Transforms descriptor sets
-				std::array< VkDescriptorSet, 2 > descriptor_sets {
+			{ // bind World, Transforms, Camera descriptor sets
+				std::array< VkDescriptorSet, 3 > descriptor_sets {
 					workspace.World_descriptors, // 0: World
 					workspace.Transforms_descriptors, // 1: Transforms
+					workspace.Camera_descriptors, // 2: Camera
 				};
 				vkCmdBindDescriptorSets(
 					workspace.command_buffer, // cmd buf
@@ -1430,7 +1434,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					workspace.command_buffer, // cmd buf
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
-					2, // second set
+					3, // second set
 					1, &texture_descriptors[inst->texture], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
@@ -1440,7 +1444,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					workspace.command_buffer, // cmd buf
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
-					3, // second set
+					4, // second set
 					1, &cubemap_descriptors[0], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);

@@ -54,7 +54,26 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set1_Transforms))
     }
 
-    { // the set2_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader
+    { // the set2_Camera layout holds an array of Transform structures in a storage buffer used in the vertex shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_Camera) );
+    }
+
+    { // the set3_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
@@ -70,7 +89,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             .pBindings = bindings.data(),
         };
 
-        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_TEXTURE) );
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_TEXTURE) );
     }
 
     // MOVE THIS TO SEPARATE LIGHT PIPELINE AS SHARED DESCRIPTOR, AS GLOBAL SHARED INFORMATION
@@ -90,7 +109,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             .pBindings = bindings.data(),
         };
 
-        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_CUBEMAPS) );
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set4_CUBEMAPS) );
     }
 
     { // create pipeline layout
@@ -100,11 +119,12 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             .size = sizeof(uint32_t),
         };
 
-        std::array< VkDescriptorSetLayout, 4 > layouts{
+        std::array< VkDescriptorSetLayout, 5 > layouts{
             set0_World,
             set1_Transforms,
-            set2_TEXTURE,
-            set3_CUBEMAPS,
+            set2_Camera,
+            set3_TEXTURE,
+            set4_CUBEMAPS,
         };
 
         VkPipelineLayoutCreateInfo create_info{
@@ -233,14 +253,19 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
 }
 
 void Viewer::ObjectsPipeline::destroy(RTG &rtg) {
-    if (set3_CUBEMAPS != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(rtg.device, set3_CUBEMAPS, nullptr);
-        set3_CUBEMAPS = VK_NULL_HANDLE;
+    if (set4_CUBEMAPS != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set4_CUBEMAPS, nullptr);
+        set4_CUBEMAPS = VK_NULL_HANDLE;
     }
 
-    if (set2_TEXTURE != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(rtg.device, set2_TEXTURE, nullptr);
-        set2_TEXTURE = VK_NULL_HANDLE;
+    if (set3_TEXTURE != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set3_TEXTURE, nullptr);
+        set3_TEXTURE = VK_NULL_HANDLE;
+    }
+
+    if (set2_Camera != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set2_Camera, nullptr);
+        set2_Camera = VK_NULL_HANDLE;
     }
 
     if (set1_Transforms != VK_NULL_HANDLE) {
