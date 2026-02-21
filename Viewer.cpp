@@ -832,7 +832,7 @@ int Viewer::load_scene(const std::string &filename) {
 		for (auto &[key, texture] : s72.textures) {
 			if (rtg.configuration.debug) std::cerr << "[TEXTURE] " << texture.src << std::endl;
 			int x = 0, y = 0, c = 0;
-			stbi_set_flip_vertically_on_load(true);
+			if (texture.type == S72::Texture::Type::flat) stbi_set_flip_vertically_on_load(true);
 			// stbi loads with 8 bit channels, hence static 32 bits chosen
 			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
 			uint32_t width = (uint32_t)x, height = (uint32_t)y;
@@ -874,17 +874,45 @@ int Viewer::load_scene(const std::string &filename) {
 					std::vector< uint64_t > pixels;
 					pixels.reserve(x * y);
 					for (size_t i = 0; i < x * y; ++i) {
-						uint32_t pixel = tex[i];
+						// switch from cubemap render -> vulkan convention
+						// left, right, back, front, top, bottom
+						size_t order[6] = { 5, 4, 2, 3, 1, 0 };
+						// rotate cubemap face conventions to upright
+						size_t f = order[i / (width * height)]; // current face
+						size_t j = i % (width * height); // jth pixel of face
+
+						// unflattened j in face
+						size_t s = j % width; 
+						size_t t = j / width;
+						
+						// transformed flattened index
+						size_t k = 0;
+						if (f == 0) { // +y
+							k = j;
+						} else if (f == 1) { // -y
+							k = j;
+						} else if (f == 2) { // +z
+							k = t * height + s;
+						} else if (f == 3) { // -z
+							k = t * height + s;
+						} else if (f == 4) { // +x
+							k = j;
+						} else if (f == 5) { // -x
+							k = j;
+						} 
+						
+						uint32_t pixel = tex[f * height * width + k];
 
 						glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
 							 pixel        & 0xff,
-							(pixel >>  8) & 0xff,
 							(pixel >> 16) & 0xff,
+							(pixel >>  8) & 0xff,
 							(pixel >> 24) & 0xff
 						));
 
 						pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
 					}
+					assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
 					rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
 				}
 

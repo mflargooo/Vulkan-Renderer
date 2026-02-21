@@ -388,7 +388,7 @@ void Helpers::transfer_to_cubemap(void const *data, size_t size, AllocatedImage 
 	uint32_t block_size = (uint32_t)size / 6;
 	assert(block_size * 6 == size && "All 6 faces must have the same amount of data!");
 	
-	for (uint32_t i = 0; i < 6; ++i) {
+	for (uint32_t i = 0; i < 6; ++i) { // layer
 		transfer_to_image(
 			static_cast<const void *>(static_cast<const char *>(data) + block_size * i), 
 			block_size, 

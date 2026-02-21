@@ -26,5 +26,5 @@ void main() {
            + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
 
     outColor = vec4((albedo / 3.1415926 + env_lighting) * e, 1.0);
-    outColor = vec4(env_lighting * e, 1.0);
+    outColor = vec4((env_lighting) * e, 1.0);
 }
