@@ -690,7 +690,7 @@ int Tutorial::load_scene(const std::string &filename) {
 				.min = glm::vec3(FLT_MAX),
 				.max = glm::vec3(-FLT_MAX),
 			};
-			for (size_t i = 1; i < 36; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
+			for (size_t i = 1; i < mesh.count; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
 				glm::vec3 pos = glm::vec3{
 					*(float *)&vertices[i * stride + offset],
 					*(float *)&vertices[i * stride + offset + 4],
