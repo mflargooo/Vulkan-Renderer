@@ -899,32 +899,17 @@ int Viewer::load_scene(const std::string &filename) {
 					pixels.reserve(x * y);
 					for (size_t i = 0; i < x * y; ++i) {
 						// switch from cubemap render -> vulkan convention
-						// left, right, back, front, top, bottom
-						size_t order[6] = { 5, 4, 2, 3, 1, 0 };
 						// rotate cubemap face conventions to upright
-						size_t f = order[i / (width * height)]; // current face
+						size_t f = 5 - i / (width * height); // current face
 						size_t j = i % (width * height); // jth pixel of face
 
 						// unflattened j in face
-						size_t s = j % width; 
-						size_t t = j / width;
+						size_t col = j % width; 
+						size_t row = j / width;
 						
 						// transformed flattened index
-						size_t k = 0;
-						if (f == 0) { // +y
-							k = j;
-						} else if (f == 1) { // -y
-							k = j;
-						} else if (f == 2) { // +z
-							k = t * height + s;
-						} else if (f == 3) { // -z
-							k = t * height + s;
-						} else if (f == 4) { // +x
-							k = j;
-						} else if (f == 5) { // -x
-							k = j;
-						} 
-						
+						size_t k = (height - 1 - row) * width + col;
+
 						uint32_t pixel = tex[f * height * width + k];
 
 						glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(

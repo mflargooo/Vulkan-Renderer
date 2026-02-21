@@ -58,9 +58,9 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                 .descriptorCount = 1,
-                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             },
         };
 
