@@ -112,15 +112,13 @@ void Helpers::destroy_buffer(AllocatedBuffer &&buffer) {
 	this ->free(std::move(buffer.allocation));
 }
 
-Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map, VkImageCreateFlags flags) {
+Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map) {
 	AllocatedImage image;
 	image.extent = extent;
 	image.format = format;
 
-	uint32_t layers = flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT ? 6 : 1;
 	VkImageCreateInfo create_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.flags = flags,
 		.imageType = VK_IMAGE_TYPE_2D,
 		.format = format,
 		.extent{
@@ -129,7 +127,7 @@ Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat
 			.depth = 1
 		},
 		.mipLevels = 1,
-		.arrayLayers = layers,
+		.arrayLayers = 1,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = tiling,
 		.usage = usage,
@@ -150,6 +148,52 @@ Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat
 }
 
 void Helpers::destroy_image(AllocatedImage &&image) {
+	vkDestroyImage(rtg.device, image.handle, nullptr);
+
+	image.handle = VK_NULL_HANDLE;
+	image.extent = VkExtent2D{.width = 0, .height = 0};
+	image.format = VK_FORMAT_UNDEFINED;
+
+	this->free(std::move(image.allocation));
+}
+
+Helpers::AllocatedImage Helpers::create_cubemap(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map) {
+	AllocatedImage image;
+	image.extent = extent;
+	image.format = format;
+
+	VkImageCreateInfo create_info{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = format,
+		.extent{
+			.width = extent.width,
+			.height = extent.height,
+			.depth = 1
+		},
+		.mipLevels = 1,
+		.arrayLayers = 6,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = tiling,
+		.usage = usage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+
+	VK( vkCreateImage(rtg.device, &create_info, nullptr, &image.handle) );
+
+	VkMemoryRequirements req;
+	vkGetImageMemoryRequirements(rtg.device, image.handle, &req);
+
+	image.allocation = allocate(req, properties, map);
+
+	VK( vkBindImageMemory(rtg.device, image.handle, image.allocation.handle, image.allocation.offset) );
+
+	return image;
+}
+
+void Helpers::destroy_cubemap(AllocatedImage &&image) {
 	vkDestroyImage(rtg.device, image.handle, nullptr);
 
 	image.handle = VK_NULL_HANDLE;
@@ -275,7 +319,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 			.imageSubresource{
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 				.mipLevel = 0,
-				.baseArrayLayer = 0,
+				.baseArrayLayer = base_array_layer,
 				.layerCount = 1,
 			},
 			.imageOffset{ .x = 0, .y = 0, .z = 0 },
@@ -337,6 +381,21 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 	
 	// destroy source buf
 	destroy_buffer(std::move(transfer_src));
+}
+
+// assume vertical strip
+void Helpers::transfer_to_cubemap(void const *data, size_t size, AllocatedImage &target) {
+	uint32_t block_size = (uint32_t)size / 6;
+	assert(block_size * 6 == size && "All 6 faces must have the same amount of data!");
+	
+	for (uint32_t i = 0; i < 6; ++i) {
+		transfer_to_image(
+			static_cast<const void *>(static_cast<const char *>(data) + block_size * i), 
+			block_size, 
+			target, 
+			i
+		);
+	}
 }
 
 //----------------------------

@@ -70,6 +70,7 @@ struct Viewer : RTG::Application {
 		VkDescriptorSetLayout set0_World = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set2_TEXTURE = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set3_CUBEMAPS = VK_NULL_HANDLE;
 
 		// types for descriptors
 		struct World {
@@ -146,6 +147,13 @@ struct Viewer : RTG::Application {
 	VkSampler texture_sampler = VK_NULL_HANDLE;
 	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;
 	std::vector< VkDescriptorSet > texture_descriptors; // allocated from texture_descriptor_pool
+
+
+	std::vector< Helpers::AllocatedImage > cubemaps;
+	std::vector< VkImageView > cubemap_views;
+	VkSampler cubemap_sampler = VK_NULL_HANDLE;
+	VkDescriptorPool cubemap_descriptor_pool = VK_NULL_HANDLE;
+	std::vector< VkDescriptorSet > cubemap_descriptors; // allocated from texture_descriptor_pool
 
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:
@@ -225,8 +233,9 @@ struct Viewer : RTG::Application {
 	
 	std::unordered_map < Helpers::AllocatedBuffer *, std::vector < ObjectInstance * > > drawables;
 
-	// texture path -> tex_view id
+	// texture path -> *_view id
 	std::unordered_map< std::string, uint32_t > tex_ids;
+	std::unordered_map< std::string, uint32_t > cubemap_ids;
 	
 	struct Material {
 		int albedo_id; // always exists

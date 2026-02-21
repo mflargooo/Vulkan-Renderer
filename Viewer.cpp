@@ -276,6 +276,24 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
+	{ // static sun and sky
+		world.SKY_DIRECTION.x = 0.0f;
+		world.SKY_DIRECTION.y = 0.0f;
+		world.SKY_DIRECTION.z = 1.0f;
+
+		world.SKY_ENERGY.r = 0.1f;
+		world.SKY_ENERGY.g = 0.1f;
+		world.SKY_ENERGY.b = 0.2f;
+
+		world.SUN_DIRECTION.x = 6.0f / 23.0f;
+		world.SUN_DIRECTION.y = 13.0f / 23.0f;
+		world.SUN_DIRECTION.z = 18.0f / 23.0f;
+
+		world.SUN_ENERGY.r = 1.0f;
+		world.SUN_ENERGY.g = 1.0f;
+		world.SUN_ENERGY.b = 0.9f;
+	}
+
 	{ // make some textures
 		{ // tex 0 is dark / light grey checker with red origin
 			uint32_t size = 128;
@@ -334,24 +352,6 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
 		}
-	}
-
-	{ // static sun and sky
-		world.SKY_DIRECTION.x = 0.0f;
-		world.SKY_DIRECTION.y = 0.0f;
-		world.SKY_DIRECTION.z = 1.0f;
-
-		world.SKY_ENERGY.r = 0.1f;
-		world.SKY_ENERGY.g = 0.1f;
-		world.SKY_ENERGY.b = 0.2f;
-
-		world.SUN_DIRECTION.x = 6.0f / 23.0f;
-		world.SUN_DIRECTION.y = 13.0f / 23.0f;
-		world.SUN_DIRECTION.z = 18.0f / 23.0f;
-
-		world.SUN_ENERGY.r = 1.0f;
-		world.SUN_ENERGY.g = 1.0f;
-		world.SUN_ENERGY.b = 0.9f;
 	}
 	
 	if (rtg.configuration.scene.compare("")) { // Load scene
@@ -457,6 +457,118 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			writes[i] = VkWriteDescriptorSet{
 				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 				.dstSet = texture_descriptors[i],
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &infos[i],
+			};
+		}
+
+		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
+	}
+
+	// cubemap initialization
+
+	{ // make image views for the cubemaps
+		cubemap_views.reserve(cubemaps.size());
+		for (Helpers::AllocatedImage const &image : cubemaps) {
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = image.handle,
+				.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+				.format = image.format,
+				// .components sets swizzling and is fine when zero inited
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = 1,
+					.baseArrayLayer = 0,
+					.layerCount = 6,
+				},
+			};
+
+			VkImageView image_view = VK_NULL_HANDLE;
+			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
+
+			cubemap_views.emplace_back(image_view);
+		}
+		assert(cubemap_views.size() == cubemaps.size());
+	}
+
+	{ // make a sampler for the textures
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.flags = 0,
+			.magFilter = VK_FILTER_NEAREST,
+			.minFilter = VK_FILTER_NEAREST,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.mipLodBias = 0.f,
+			.anisotropyEnable  = VK_FALSE,
+			.maxAnisotropy = 0.f,
+			.compareEnable = VK_FALSE,
+			.compareOp = VK_COMPARE_OP_ALWAYS,
+			.minLod = 0.f,
+			.maxLod = 0.f,
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &cubemap_sampler) );
+	}
+
+	{ // create the texture descriptor pool
+		uint32_t per_cubemap = uint32_t(cubemaps.size()); // for easier to read counting
+
+		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1 * 1 * per_cubemap, // one desc per set, on set per tex
+			},
+		};
+
+		VkDescriptorPoolCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+			.maxSets = 1 * per_cubemap, // one set per texture
+			.poolSizeCount = uint32_t(pool_sizes.size()),
+			.pPoolSizes = pool_sizes.data(),
+		};
+
+		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &cubemap_descriptor_pool) );
+	}
+
+	{ // allocate and write the cubemap descriptor sets
+		// allocate the descriptors (using same alloc_info)
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = cubemap_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set3_CUBEMAPS,
+		};
+		cubemap_descriptors.assign(cubemaps.size(), VK_NULL_HANDLE);
+		for (VkDescriptorSet &descriptor_set : cubemap_descriptors) {
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set) );
+		}
+
+		// write descriptor for cubemaps
+		std::vector< VkDescriptorImageInfo > infos(cubemaps.size());
+		std::vector< VkWriteDescriptorSet > writes(cubemaps.size());
+
+		for (Helpers::AllocatedImage const &image : cubemaps) {
+			size_t i = &image - &cubemaps[0];
+
+			infos[i] = VkDescriptorImageInfo{
+				.sampler = cubemap_sampler,
+				.imageView = cubemap_views[i],
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+			writes[i] = VkWriteDescriptorSet{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = cubemap_descriptors[i],
 				.dstBinding = 0,
 				.dstArrayElement = 0,
 				.descriptorCount = 1,
@@ -722,46 +834,43 @@ int Viewer::load_scene(const std::string &filename) {
 			int x = 0, y = 0, c = 0;
 			stbi_set_flip_vertically_on_load(true);
 			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
-			
-			VkImageCreateFlags flags = 0;
-			VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
 			uint32_t width = (uint32_t)x, height = (uint32_t)y;
 
 			if (tex) {
 				if (texture.type == S72::Texture::Type::flat) {
+					VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
 					if (texture.format == S72::Texture::Format::linear) {
 						format = VK_FORMAT_R8G8B8A8_UNORM;
 					}
 
-				} else if (texture.type == S72::Texture::Type::cube) {
-					flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
-					format = VK_FORMAT_R8G8B8A8_UNORM;
-					height = width; // assume always vertical strip, for now
-				}
+					// track index of texture
+					tex_ids.insert({ texture.path, (uint32_t)textures.size() });
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = width, .height = height },
+						format,
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+						Helpers::Unmapped
+					));
 
-				// track index of texture
-				tex_ids.insert({ texture.path, (uint32_t)textures.size() });
-				textures.emplace_back(rtg.helpers.create_image(
-					VkExtent2D{ .width = width, .height = height },
-					format,
-					VK_IMAGE_TILING_OPTIMAL,
-					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					Helpers::Unmapped,
-					flags
-				));
-
-				if (texture.type == S72::Texture::Type::flat) {
 					rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+
 				} else if (texture.type == S72::Texture::Type::cube) {
-					if (rtg.configuration.debug) std::cout << "[TEXTURE] Handling cubemap " << texture.src << std::endl;
-					Cubemap::transfer_vertical_strip_to_image(
-						rtg, 
-						tex, 
-						sizeof(tex[0]) * x * y, 
-						textures.back(), 
-						{ .width = width, .height = height }
-					);
+					height = width; // assume always vertical strip, for now
+
+					// track index of texture
+					cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
+					cubemaps.emplace_back(rtg.helpers.create_cubemap(
+						VkExtent2D{ .width = width, .height = height },
+						VK_FORMAT_R8G8B8A8_UNORM, // change after converting data to appropriate format
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+						Helpers::Unmapped
+					));
+
+					rtg.helpers.transfer_to_cubemap(tex, sizeof(tex[0]) * x * y, cubemaps.back());
 				}
 
 				stbi_image_free(tex);
@@ -770,6 +879,8 @@ int Viewer::load_scene(const std::string &filename) {
 			}
 		}
 	}
+
+	std::cout << "Loaded " << textures.size() << " textures and " << cubemaps.size() << " cubemaps!" << std::endl;
 
 	{ // load materials
 		for (auto &[key, material] : s72.materials) {
