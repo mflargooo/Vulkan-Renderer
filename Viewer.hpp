@@ -187,8 +187,8 @@ struct Viewer : RTG::Application {
 	struct OrbitCamera { // used when camera_mode == CameraMode::Free
 		float target_x = 0.f, target_y = 0.f, target_z = 0.f; // cam looking + orbiting
 		float radius = 2.f; // dist from cam to target
-		float azimuth = 0.f; // ccw angle around z between x and cam dir (rads)
-		float elevation = .25f * float(M_PI); // angle from xy plane to cam dir (rads)
+		float azimuth = -float(M_PI) / 2.0f; // ccw angle around z between x and cam dir (rads)
+		float elevation = 0.f; // angle from xy plane to cam dir (rads)
 
 		float fov = 60.f / 180.f * float(M_PI); // vfov (rad)
 		float near = .1f; // near clip

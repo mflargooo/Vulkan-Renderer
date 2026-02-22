@@ -900,22 +900,15 @@ int Viewer::load_scene(const std::string &filename) {
 					for (size_t i = 0; i < x * y; ++i) {
 						// switch from cubemap render -> vulkan convention
 						// rotate cubemap face conventions to upright
-						size_t f = 5 - i / (width * height); // current face
+						size_t f = i / (width * height); // current face
 						size_t j = i % (width * height); // jth pixel of face
-
-						// unflattened j in face
-						size_t col = j % width; 
-						size_t row = j / width;
 						
-						// transformed flattened index
-						size_t k = (height - 1 - row) * width + col;
-
-						uint32_t pixel = tex[f * height * width + k];
+						uint32_t pixel = tex[f * height * width + j];
 
 						glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
 							 pixel        & 0xff,
-							(pixel >> 16) & 0xff,
 							(pixel >>  8) & 0xff,
+							(pixel >> 16) & 0xff,
 							(pixel >> 24) & 0xff
 						));
 
@@ -991,7 +984,7 @@ int Viewer::load_scene(const std::string &filename) {
 			exit(1);
 		}
 
-		selected_scene_camera = it;
+	selected_scene_camera = it;
 	} else if (scene_cameras.size() > 0) {
 		selected_scene_camera = scene_cameras.begin();
 	} else {
@@ -1013,12 +1006,13 @@ void Viewer::parse_scene_graph() { // populate all object instances
 	struct Element {
 		S72::Node *node;
 		glm::mat4 xf;
+		glm::quat xfn;
 	};
 	std::stack< Element > frontier;
 
 	// build the frontier from scene roots
 	for (auto root : s72.scene.roots) {
-		frontier.push({ .node = root, .xf = glm::mat4(1.f) });
+		frontier.push({ .node = root, .xf = glm::mat4(1.f), .xfn = glm::quat(0.f, 0.f, 0.f, 1.f) });
 	}
 	
 	// dfs through the DAG to populate instances
@@ -1033,9 +1027,12 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			glm::mat4_cast(glm::quat(node->rotation.z, node->rotation.w, node->rotation.x, node->rotation.y)) *
 			glm::scale(glm::mat4(1.0f), node->scale);
 
+		glm::quat xfn = elem.xfn * 
+			glm::quat(node->rotation.z, node->rotation.w, node->rotation.x, node->rotation.y);
+
 		// push children to frontier with this xf as their parent space
 		for (auto child : node->children) {
-			frontier.push({ .node = child, .xf = xf });
+			frontier.push({ .node = child, .xf = xf, .xfn = xfn });
 		}
 
 		// handle the node appropriately
@@ -1046,7 +1043,6 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			if (node->mesh->material) {
 				material = materials[node->mesh->material->name];
 			}
-
 			// create object instance
 			object_instances.emplace_back(ObjectInstance{
 				.vertices{
@@ -1055,9 +1051,9 @@ void Viewer::parse_scene_graph() { // populate all object instances
 				},
 				.buffer = &scene_vertices.at(node->mesh->attributes.at("POSITION").src.path),
 				.transform{
-					/* .CLIP_FROM_LOCAL = glm::mat4(1.f)), -- filled by update */
+					/* .CLIP_FROM_LOCAL = mat4_from_glm(glm::mat4(1.f)), -- filled by update */
 					.WORLD_FROM_LOCAL = xf,
-					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(xf)),
+					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(glm::mat3_cast(xfn))),
 				},
 				.texture = uint32_t(material.albedo_id),
 				.material = material.type,

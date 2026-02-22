@@ -46,8 +46,9 @@ void main() {
         vec3 env_lighting = texture(CUBEMAP, r).rgb;
         outColor = vec4(env_lighting, 1.0);
         
-    } else { // material.type == 2 ENVIRONMENT
+    } else { // material.type == 2 // ENVIRONMENT
         vec3 n = normalize(normal);
         outColor = vec4(texture(CUBEMAP, n).rgb, 1.0);
     }
+
 }

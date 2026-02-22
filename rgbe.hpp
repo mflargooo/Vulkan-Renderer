@@ -10,9 +10,9 @@ inline glm::vec3 linear_from_rgbe(glm::u8vec4 color) {
 
     int e = color.a - 128;
     return glm::vec3{
-        std::ldexp((float)color.r + 0.5f, e) / 256.0f,
-        std::ldexp((float)color.b + 0.5f, e) / 256.0f,
-        std::ldexp((float)color.g + 0.5f, e) / 256.0f,
+        std::ldexpf(((float)color.r + 0.5f) / 256.f, e),
+        std::ldexpf(((float)color.g + 0.5f) / 256.f, e),
+        std::ldexpf(((float)color.b + 0.5f) / 256.f, e),
     };
 };
 

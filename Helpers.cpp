@@ -390,7 +390,7 @@ void Helpers::transfer_to_cubemap(void const *data, size_t size, AllocatedImage 
 	
 	for (uint32_t i = 0; i < 6; ++i) { // layer
 		transfer_to_image(
-			static_cast<const void *>(static_cast<const char *>(data) + block_size * i), 
+			static_cast<void const *>(static_cast<char const *>(data) + block_size * i), 
 			block_size, 
 			target, 
 			i

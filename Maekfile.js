@@ -64,8 +64,15 @@ main_objs.push( maek.CPP('ObjectsPipeline.cpp', undefined, { depends:[...objects
 
 const main_exe = maek.LINK([...main_objs], 'bin/viewer');
 
+// cube program
+const cube_objs = [
+	maek.CPP('internal/cube/main.cpp')
+]
+
+const cube_exe = maek.LINK([...cube_objs], 'bin/cube');
+
 //default targets:
-maek.TARGETS = [main_exe];
+maek.TARGETS = [main_exe, cube_exe];
 
 //- - - - - - - - - - - - - - - - - - - - -
 function custom_flags_and_rules() {
@@ -87,6 +94,7 @@ function custom_flags_and_rules() {
 			`-I${GLFW_DIR}/include`,
 			`-I./external/glm`,
 			`-I./external/s72`,
+			`-I./external/stb`,
 		];
 
 		maek.options.LINKLibs = [
