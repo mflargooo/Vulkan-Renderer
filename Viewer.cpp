@@ -1006,13 +1006,12 @@ void Viewer::parse_scene_graph() { // populate all object instances
 	struct Element {
 		S72::Node *node;
 		glm::mat4 xf;
-		glm::quat xfn;
 	};
 	std::stack< Element > frontier;
 
 	// build the frontier from scene roots
 	for (auto root : s72.scene.roots) {
-		frontier.push({ .node = root, .xf = glm::mat4(1.f), .xfn = glm::quat(0.f, 0.f, 0.f, 1.f) });
+		frontier.push({ .node = root, .xf = glm::mat4(1.f) });
 	}
 	
 	// dfs through the DAG to populate instances
@@ -1027,12 +1026,9 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			glm::mat4_cast(glm::quat(node->rotation.z, node->rotation.w, node->rotation.x, node->rotation.y)) *
 			glm::scale(glm::mat4(1.0f), node->scale);
 
-		glm::quat xfn = elem.xfn * 
-			glm::quat(node->rotation.z, node->rotation.w, node->rotation.x, node->rotation.y);
-
 		// push children to frontier with this xf as their parent space
 		for (auto child : node->children) {
-			frontier.push({ .node = child, .xf = xf, .xfn = xfn });
+			frontier.push({ .node = child, .xf = xf });
 		}
 
 		// handle the node appropriately
@@ -1051,9 +1047,9 @@ void Viewer::parse_scene_graph() { // populate all object instances
 				},
 				.buffer = &scene_vertices.at(node->mesh->attributes.at("POSITION").src.path),
 				.transform{
-					/* .CLIP_FROM_LOCAL = mat4_from_glm(glm::mat4(1.f)), -- filled by update */
+					/* .CLIP_FROM_LOCAL = glm::mat4(1.f), -- filled by update */
 					.WORLD_FROM_LOCAL = xf,
-					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(glm::mat3_cast(xfn))),
+					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(glm::mat3(xf))),
 				},
 				.texture = uint32_t(material.albedo_id),
 				.material = material.type,

@@ -43,7 +43,7 @@ static glm::vec3 direction_from_texcoords(float cx, float cy, size_t face) {
 // equiv to left, right, front, back, top, bottom
 // size of data is width * height
 // outsize is x * y;
-static void const *integrate(void const *data, size_t width, size_t height, size_t *out_width, size_t *out_height) {
+static std::vector< uint32_t > integrate_rgbe(void const *data, size_t width, size_t height, size_t *out_width, size_t *out_height) {
     size_t face_width = width;
     size_t face_height = height / 6;
 
@@ -56,8 +56,13 @@ static void const *integrate(void const *data, size_t width, size_t height, size
     float in_energy = 0.f;
     for (size_t i = 0; i < width * height; ++i) {
         // get linear pixel data
-        glm::u8vec4 rgbe = static_cast<glm::u8vec4 const *>(data)[i];
-        glm::vec3 rgb = linear_from_rgbe(rgbe);
+        uint32_t rgbe = static_cast<uint32_t const *>(data)[i];
+        glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
+             rgbe        & 0xff,
+            (rgbe >>  8) & 0xff,
+            (rgbe >> 16) & 0xff,
+            (rgbe >> 24) & 0xff
+        ));
 
         size_t f = i / (face_width * face_height); // get face (0: +x, 1: -x, 2: +y, 3: -y, 4: +z, 5: -z)
         size_t p = i % (face_width * face_height); // pth pixel in fth face
@@ -110,5 +115,15 @@ static void const *integrate(void const *data, size_t width, size_t height, size
         std::cout << "[DEBUG] in energy " << in_energy << ", out energy " << out_energy << std::endl;
     }
 
-    return nullptr;
+    std::vector< uint32_t > rgbe_out((*out_width) * (*out_height));
+    for (size_t i = 0; i < (*out_width) * (*out_height); ++i) {
+        glm::u8vec4 rgbe = rgbe_from_linear(out[i]);
+        rgbe_out[i] = 
+            (((uint32_t) (rgbe.a & 0xff)) << 24) | 
+            (((uint32_t) (rgbe.b & 0xff)) << 16) |
+            (((uint32_t) (rgbe.g & 0xff)) <<  8) |
+            (((uint32_t) (rgbe.r & 0xff))      ) ;
+    }
+
+    return std::move(rgbe_out);
 };
