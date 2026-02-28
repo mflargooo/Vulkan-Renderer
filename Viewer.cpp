@@ -884,41 +884,94 @@ int Viewer::load_scene(const std::string &filename) {
 				} else if (texture.type == S72::Texture::Type::cube) {
 					height = width; // assume always vertical strip, for now
 
-					// track index of texture
-					cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
-					cubemaps.emplace_back(rtg.helpers.create_cubemap(
-						VkExtent2D{ .width = width, .height = height },
-						VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
-						VK_IMAGE_TILING_OPTIMAL,
-						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-						Helpers::Unmapped
-					));
-
-					std::vector< uint64_t > pixels;
-					pixels.reserve(x * y);
-					for (size_t i = 0; i < x * y; ++i) {
-						// switch from cubemap render -> vulkan convention
-						// rotate cubemap face conventions to upright
-						size_t f = i / (width * height); // current face
-						size_t j = i % (width * height); // jth pixel of face
-						
-						uint32_t pixel = tex[f * height * width + j];
-
-						glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
-							 pixel        & 0xff,
-							(pixel >>  8) & 0xff,
-							(pixel >> 16) & 0xff,
-							(pixel >> 24) & 0xff
+					{
+						// track index of texture
+						cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
+						cubemaps.emplace_back(rtg.helpers.create_cubemap(
+							VkExtent2D{ .width = width, .height = height },
+							VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
+							VK_IMAGE_TILING_OPTIMAL,
+							VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+							VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+							Helpers::Unmapped
 						));
 
-						pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
+						std::vector< uint64_t > pixels;
+						pixels.reserve(x * y);
+						for (size_t i = 0; i < x * y; ++i) {
+							// switch from cubemap render -> vulkan convention
+							// rotate cubemap face conventions to upright
+							size_t f = 5 - i / (width * height); // current face
+							size_t j = i % (width * height); // jth pixel of face
+						
+						size_t col = j % width; 
+						size_t row = j / width;
+						size_t k = (height - 1 - row) * width + col;
+
+						uint32_t pixel = tex[f * height * width + k];
+
+							glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
+								pixel        & 0xff,
+								(pixel >>  8) & 0xff,
+								(pixel >> 16) & 0xff,
+								(pixel >> 24) & 0xff
+							));
+
+							pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
+						}
+						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
+						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
 					}
-					assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
-					rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
+					stbi_image_free(tex);
+
+					// also load the lambertian
+					{
+						std::string lambertian = texture.path.substr(0, texture.path.size() - 3) + "lambertian.png";
+						tex = (uint32_t *)stbi_load(lambertian.data(), &x, &y, &c, 4);
+						width = (uint32_t)x, height = (uint32_t)y;
+						height = width; // assume always vertical strip, for now
+						
+						// track index of texture
+						cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
+						cubemaps.emplace_back(rtg.helpers.create_cubemap(
+							VkExtent2D{ .width = width, .height = height },
+							VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
+							VK_IMAGE_TILING_OPTIMAL,
+							VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+							VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+							Helpers::Unmapped
+						));
+
+						std::vector< uint64_t > pixels;
+						pixels.reserve(x * y);
+						for (size_t i = 0; i < x * y; ++i) {
+							// switch from cubemap render -> vulkan convention
+							// rotate cubemap face conventions to upright
+							size_t f = 5 - i / (width * height); // current face
+							size_t j = i % (width * height); // jth pixel of face
+							
+						size_t col = j % width; 
+						size_t row = j / width;	
+						size_t k = (height - 1 - row) * width + col;
+
+						uint32_t pixel = tex[f * height * width + k];
+
+							glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
+								pixel        & 0xff,
+								(pixel >>  8) & 0xff,
+								(pixel >> 16) & 0xff,
+								(pixel >> 24) & 0xff
+							));
+
+							pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
+						}
+						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
+						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
+					}
 				}
 
 				stbi_image_free(tex);
+
 			} else {
 				std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
 			}
@@ -1422,12 +1475,20 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
 					4, // second set
-					1, &cubemap_descriptors[0], // descriptor sets count, ptr
+					1, &cubemap_descriptors[inst->material == 0 ? 1 : 0], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 
-				// push material type
-				vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(uint32_t), &inst->material);
+				static struct Constants {
+					uint32_t material;
+					float exposure;
+					int32_t tonemap;
+				} push_constants;
+				push_constants.material = inst->material;
+				push_constants.exposure = rtg.configuration.exposure;
+				push_constants.tonemap = rtg.configuration.tonemap.compare("linear") == 0 ? 0 : 1;
+				// push constants type
+				vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(Constants), &push_constants);
 
 				vkCmdDraw(workspace.command_buffer, inst->vertices.count, 1, inst->vertices.first, index);
 			}

@@ -85,6 +85,12 @@ struct RTG {
 
 		// culling mode
 		std::string culling_mode = "none";
+		
+		// exposure
+		float exposure = 0;
+
+		// tonemap
+		std::string tonemap = "linear";
 
 		//for configuration construction + management:
 		Configuration() = default;

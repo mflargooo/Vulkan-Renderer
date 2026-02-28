@@ -116,7 +116,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VkPushConstantRange range{
             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
             .offset = 0,
-            .size = sizeof(uint32_t),
+            .size = sizeof(uint32_t) + sizeof(int32_t) + sizeof(float),
         };
 
         std::array< VkDescriptorSetLayout, 5 > layouts{
