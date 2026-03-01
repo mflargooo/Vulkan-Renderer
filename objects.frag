@@ -17,22 +17,34 @@ layout(push_constant) uniform Constants {
     uint type;
     float exposure;
     int tonemap;
+    int has_normal_map;
 } pc;
 
 layout(set=3, binding=0) uniform sampler2D TEXTURE;
 layout(set=4, binding=0) uniform samplerCube CUBEMAP;
+layout(set=5, binding=0) uniform sampler2D NORMAL;
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
-layout(location = 3) in vec2 texCoord;
+layout(location = 2) in vec3 tangent;
+layout(location = 3) in vec3 bitangent;
+layout(location = 4) in vec2 texCoord;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {  
+    vec3 n = normal;
+    vec3 ns = normal;
+    if (pc.has_normal_map != 0) {
+        ns = normalize(2.0 * texture(NORMAL, texCoord).rgb - 1.0);
+        mat3 xf = mat3(tangent, bitangent, normal);
+
+        n = normalize(xf * ns);
+    }
+
     vec3 base_color = vec3(0.0);
     if (pc.type == 0) { // LAMBERTIAN
         vec3 albedo = texture(TEXTURE, texCoord).rgb;
-        vec3 n = normalize(normal);
 
         // hemi sky + directional sun
         vec3 e = SKY_ENERGY * (0.5 * dot(n,SKY_DIRECTION) + 0.5)
@@ -43,17 +55,14 @@ void main() {
     } else if (pc.type == 1) { 
         mat4 WORLD_FROM_CLIP = inverse(CLIP_FROM_WORLD);
         vec4 eye = WORLD_FROM_CLIP * vec4(0.0, 0.0, 0.0, 1.0);
-        eye /= eye.w;
 
-        vec3 to_eye = normalize(eye.xyz - position);
+        vec3 to_eye = normalize(eye.xyz / eye.w - position);
 
-        vec3 n = normalize(normal);
         vec3 r = reflect(-to_eye, n);
         vec3 env_lighting = texture(CUBEMAP, r).rgb;
         base_color = env_lighting;
         
     } else { // pc.type == 2 // ENVIRONMENT
-        vec3 n = normalize(normal);
         base_color = texture(CUBEMAP, n).rgb;
     }
 

@@ -93,7 +93,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
     }
 
     // MOVE THIS TO SEPARATE LIGHT PIPELINE AS SHARED DESCRIPTOR, AS GLOBAL SHARED INFORMATION
-    { // the set3_CUBEMAPS layout has a single descriptor for a sampler2D used in the fragment shader
+    { // the set4_CUBEMAPS layout has a single descriptor for a sampler2D used in the fragment shader
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
@@ -112,19 +112,39 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set4_CUBEMAPS) );
     }
 
+    { // the set5_NORMAL_MAP layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set5_NORMAL_MAP) );
+    }
+
     { // create pipeline layout
         VkPushConstantRange range{
             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
             .offset = 0,
-            .size = sizeof(uint32_t) + sizeof(int32_t) + sizeof(float),
+            .size = sizeof(Constants),
         };
 
-        std::array< VkDescriptorSetLayout, 5 > layouts{
+        std::array< VkDescriptorSetLayout, 6 > layouts{
             set0_World,
             set1_Transforms,
             set2_Camera,
             set3_TEXTURE,
             set4_CUBEMAPS,
+            set5_NORMAL_MAP,
         };
 
         VkPipelineLayoutCreateInfo create_info{
@@ -253,6 +273,11 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
 }
 
 void Viewer::ObjectsPipeline::destroy(RTG &rtg) {
+    if (set5_NORMAL_MAP != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set5_NORMAL_MAP, nullptr);
+        set5_NORMAL_MAP = VK_NULL_HANDLE;
+    }
+
     if (set4_CUBEMAPS != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(rtg.device, set4_CUBEMAPS, nullptr);
         set4_CUBEMAPS = VK_NULL_HANDLE;

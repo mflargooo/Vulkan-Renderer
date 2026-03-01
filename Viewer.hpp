@@ -72,6 +72,7 @@ struct Viewer : RTG::Application {
 		VkDescriptorSetLayout set2_Camera = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set3_TEXTURE = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set4_CUBEMAPS = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set5_NORMAL_MAP = VK_NULL_HANDLE;
 
 		// types for descriptors
 		struct World {
@@ -89,7 +90,12 @@ struct Viewer : RTG::Application {
 		};
 		static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4, "Transform is the expected size.");
 
-		// no push constants
+		struct Constants {
+			uint32_t material;
+			float exposure;
+			int32_t tonemap;
+			int has_normal_map;
+		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
@@ -154,6 +160,8 @@ struct Viewer : RTG::Application {
 	VkSampler cubemap_sampler = VK_NULL_HANDLE;
 	VkDescriptorPool cubemap_descriptor_pool = VK_NULL_HANDLE;
 	std::vector< VkDescriptorSet > cubemap_descriptors; // allocated from cubemap_descriptor_pool
+
+	// normal maps are stored in textures map
 
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:
@@ -224,7 +232,8 @@ struct Viewer : RTG::Application {
 		ObjectVertices vertices;
 		Helpers::AllocatedBuffer *buffer = nullptr;
 		ObjectsPipeline::Transform transform;
-		uint32_t texture = 0;
+		int32_t texture = -1;
+		int32_t normal_map = -1;
 		uint32_t material = 0; // 0 - lambert, 1 - mirror
 	};
 	std::vector< ObjectInstance > object_instances;
@@ -240,9 +249,9 @@ struct Viewer : RTG::Application {
 	
 	struct Material {
 		uint32_t type;
-		int albedo_id; // always exists
-		int normal_id; // may not exist
-		int displacement_id; // may not exist
+		int albedo_id = -1; // may not exists
+		int normal_id = -1; // may not exist
+		int displacement_id = -1; // may not exist
 	};
 	std::unordered_map< std::string, Material > materials;
 

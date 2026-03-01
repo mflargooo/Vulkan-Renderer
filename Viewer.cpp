@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <filesystem>
 
 // for building the scene
 #include <stack>
@@ -17,7 +18,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <s72/S72.hpp>
 #include <s72/DataStream.hpp>
 #include <variant>
 #include <limits>
@@ -856,7 +856,7 @@ int Viewer::load_scene(const std::string &filename) {
 		for (auto &[key, texture] : s72.textures) {
 			if (rtg.configuration.debug) std::cerr << "[TEXTURE] " << texture.src << std::endl;
 			int x = 0, y = 0, c = 0;
-			if (texture.type == S72::Texture::Type::flat) stbi_set_flip_vertically_on_load(true);
+			stbi_set_flip_vertically_on_load(true);
 			// stbi loads with 8 bit channels, hence static 32 bits chosen
 			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
 			uint32_t width = (uint32_t)x, height = (uint32_t)y;
@@ -869,7 +869,7 @@ int Viewer::load_scene(const std::string &filename) {
 					}
 
 					// track index of texture
-					tex_ids.insert({ texture.path, (uint32_t)textures.size() });
+					tex_ids.insert({ texture.path, (int32_t)textures.size() });
 					textures.emplace_back(rtg.helpers.create_image(
 						VkExtent2D{ .width = width, .height = height },
 						format,
@@ -925,9 +925,11 @@ int Viewer::load_scene(const std::string &filename) {
 					stbi_image_free(tex);
 
 					// also load the lambertian
-					{
-						std::string lambertian = texture.path.substr(0, texture.path.size() - 3) + "lambertian.png";
-						tex = (uint32_t *)stbi_load(lambertian.data(), &x, &y, &c, 4);
+					for (std::string suffix : { "lambertian.png" }){
+						std::string path = texture.path.substr(0, texture.path.size() - 3) + suffix;
+						if (!std::filesystem::exists(path)) continue;
+
+						tex = (uint32_t *)stbi_load(path.data(), &x, &y, &c, 4);
 						width = (uint32_t)x, height = (uint32_t)y;
 						height = width; // assume always vertical strip, for now
 						
@@ -967,10 +969,9 @@ int Viewer::load_scene(const std::string &filename) {
 						}
 						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
 						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
+						stbi_image_free(tex);
 					}
 				}
-
-				stbi_image_free(tex);
 
 			} else {
 				std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
@@ -985,10 +986,9 @@ int Viewer::load_scene(const std::string &filename) {
 			// if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
 			
 			int albedo_id = -1;
-			int normal_id = -1;
-			int displacement_id = -1;
+			int normal_id = material.normal_map ? (int)tex_ids[material.normal_map->path] : -1;
+			int displacement_id = material.displacement_map ? (int)tex_ids[material.displacement_map->path] : -1;
 
-			// for now we assume lambertian
 			if (auto p_lamb = std::get_if<S72::Material::Lambertian>(&material.brdf)) {
 				S72::Material::Lambertian lamb = *p_lamb;
 				// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
@@ -1016,14 +1016,11 @@ int Viewer::load_scene(const std::string &filename) {
 					albedo_id = (int)tex_ids[(*p_texture)->path];
 				}
 
-				if (material.normal_map) normal_id = (int)tex_ids[material.normal_map->path];	
-				if (material.displacement_map) displacement_id = (int)tex_ids[material.displacement_map->path];
-
 				materials.insert({ material.name, Material{ .type = 0, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id } });
 			} else if (auto p_mirror = std::get_if<S72::Material::Mirror>(&material.brdf)) {
-				materials.insert({ material.name, Material{ .type = 1 }});
+				materials.insert({ material.name, Material{ .type = 1, .normal_id = normal_id, .displacement_id = displacement_id }});
 			} else if (auto p_env = std::get_if<S72::Material::Environment>(&material.brdf)) {
-				materials.insert({ material.name, Material{ .type = 3 }});
+				materials.insert({ material.name, Material{ .type = 3, .normal_id = normal_id, .displacement_id = displacement_id }});
 			}
 		}
 	}
@@ -1088,7 +1085,7 @@ void Viewer::parse_scene_graph() { // populate all object instances
 		if (node->mesh) {
 			// if (rtg.configuration.debug) std::cerr << "[MESH] " << node->mesh->name << " located at " << glm::to_string(xf) << std::endl; 
 			
-			Material material{ .albedo_id = 0 };
+			Material material;
 			if (node->mesh->material) {
 				material = materials[node->mesh->material->name];
 			}
@@ -1104,7 +1101,8 @@ void Viewer::parse_scene_graph() { // populate all object instances
 					.WORLD_FROM_LOCAL = xf,
 					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(glm::mat3(xf))),
 				},
-				.texture = uint32_t(material.albedo_id),
+				.texture = int32_t(material.albedo_id),
+				.normal_map = int32_t(material.normal_id),
 				.material = material.type,
 			});
 		} else if (node->camera) {
@@ -1465,7 +1463,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
 					3, // second set
-					1, &texture_descriptors[inst->texture], // descriptor sets count, ptr
+					1, &texture_descriptors[inst->texture >= 0 ? inst->texture : 0], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 
@@ -1479,16 +1477,25 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					0, nullptr // dynamic offsets count, ptr
 				);
 
-				static struct Constants {
-					uint32_t material;
-					float exposure;
-					int32_t tonemap;
-				} push_constants;
-				push_constants.material = inst->material;
-				push_constants.exposure = rtg.configuration.exposure;
-				push_constants.tonemap = rtg.configuration.tonemap.compare("linear") == 0 ? 0 : 1;
+				// bind normal_map descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					5, // fifth set
+					1, &texture_descriptors[inst->normal_map >= 0 ? inst->normal_map : 0], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
+				ObjectsPipeline::Constants constants = {
+					.material = inst->material,
+					.exposure = rtg.configuration.exposure,
+					.tonemap = rtg.configuration.tonemap.compare("linear") == 0 ? 0 : 1,
+					.has_normal_map = inst->normal_map >= 0 ? 1 : 0,
+				};
+
 				// push constants type
-				vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(Constants), &push_constants);
+				vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ObjectsPipeline::Constants), &constants);
 
 				vkCmdDraw(workspace.command_buffer, inst->vertices.count, 1, inst->vertices.first, index);
 			}
