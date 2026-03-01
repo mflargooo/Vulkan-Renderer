@@ -24,6 +24,11 @@ const maek = init_maek();
 custom_flags_and_rules();
 //(moved to a function so the build definition is closer to the top of the file)
 
+const common_objs = [
+	maek.CPP('RTG.cpp'),
+	maek.CPP('Helpers.cpp'),
+];
+
 //maek.CPP(...) builds a c++ file:
 // it returns the path to the output object file
 const main_objs = [
@@ -31,8 +36,6 @@ const main_objs = [
 	maek.CPP('PosColVertex.cpp'),
 	maek.CPP('PosNorTexVertex.cpp'),
 	maek.CPP('PosNorTanTexVertex.cpp'),
-	maek.CPP('RTG.cpp'),
-	maek.CPP('Helpers.cpp'),
 	maek.CPP('main.cpp'),
 	maek.CPP('external/s72/s72/S72.cpp'),
 	maek.CPP('external/s72/s72/sejp.cpp'),
@@ -62,14 +65,19 @@ const objects_shaders = [
 ];
 main_objs.push( maek.CPP('ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
-const main_exe = maek.LINK([...main_objs], 'bin/viewer');
+const main_exe = maek.LINK([...main_objs, ...common_objs], 'bin/viewer');
 
 // cube program
 const cube_objs = [
-	maek.CPP('internal/cube/main.cpp')
-]
+	maek.CPP('internal/cube/cube-main.cpp')
+];
 
-const cube_exe = maek.LINK([...cube_objs], 'bin/cube');
+const cube_shaders = [
+	maek.GLSLC('internal/cube/cube.comp')
+];
+cube_objs.push( maek.CPP('internal/cube/CubePipeline.cpp', undefined, { depends:[...cube_shaders] } ) );
+
+const cube_exe = maek.LINK([...cube_objs, ...common_objs], 'bin/cube');
 
 //default targets:
 maek.TARGETS = [main_exe, cube_exe];

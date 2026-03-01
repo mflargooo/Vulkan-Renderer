@@ -1,10 +1,10 @@
 #include "CubePipeline.hpp"
 
-#include "Helpers.hpp"
-#include "VK.hpp"
+#include "../../Helpers.hpp"
+#include "../../VK.hpp"
 
 static uint32_t cube_code[] =
-#include "spv/cube.comp.inl"
+#include "../../spv/internal/cube/cube.comp.inl"
 ;
 
 void CubePipeline::create(RTG &rtg) {
@@ -20,15 +20,15 @@ void CubePipeline::create(RTG &rtg) {
             },
             VkDescriptorSetLayoutBinding{
                 .binding = 1,
-                .descriptorType = VK_DESCIPTOR_TYPE_STORAGE_IMAGE,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
             },
         };
 
         VkDescriptorSetLayoutCreateInfo create_info{
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUR_CREATE_INFO,
-            .bindingCount = (uint32)bindings.size(),
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = (uint32_t)bindings.size(),
             .pBindings = bindings.data(),
         };
 
@@ -45,7 +45,7 @@ void CubePipeline::create(RTG &rtg) {
             },
         };
 
-        VkDescriptorSetCreateInfo create_info{
+        VkDescriptorSetLayoutCreateInfo create_info{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
             .bindingCount = (uint32_t)bindings.size(),
             .pBindings = bindings.data(),
@@ -92,7 +92,7 @@ void CubePipeline::create(RTG &rtg) {
     vkDestroyShaderModule(rtg.device, module, nullptr);
 }
 
-voi CubePipeline::destroy(RTG &rtg) {
+void CubePipeline::destroy(RTG &rtg) {
     if (handle != VK_NULL_HANDLE) {
         vkDestroyPipeline(rtg.device, handle, nullptr);
         handle = VK_NULL_HANDLE;

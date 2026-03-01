@@ -8,7 +8,7 @@ layout(set = 0, binding = 1, rgba32f) uniform restrict readonly image2D inFace;
 layout(set = 1, binding = 1, std140) uniform OutFace {
     mat3x3 WORLD_FROM_OUT_PX;
 };
-layout(set = 1, binding = 1, rgba32f) uniform restrict readonly image2D outFace;
+layout(set = 1, binding = 1, rgba32f) uniform restrict image2D outFace;
 
 layout(set = 2, binding = 2) uniform Roughness {
     float roughness;
@@ -21,5 +21,6 @@ void main() {
     int out_y = int(gl_GlobalInvocationID.y);
 
     vec3 acc = imageLoad(inFace, ivec2(out_x, out_y)).rgb;
+    acc = vec3(1.0, 0.0, 1.0);
     imageStore(outFace, ivec2(out_x, out_y), vec4(acc, 0.0));
 }

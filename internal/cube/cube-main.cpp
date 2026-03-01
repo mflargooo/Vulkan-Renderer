@@ -1,12 +1,16 @@
 #include "../../RTG.hpp"
 #include "CubePipeline.hpp"
-#include "VK.hpp"
+#include "../../VK.hpp"
+
+#define __STDC_LIB_EXT1__
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "../../external/stb/stb_image_write.h"
 
 #include <glm/glm.hpp>
 
 #include <iostream>
 
-struct GPUFACE {
+struct GPUFace {
     Helpers::AllocatedImage image;
     Helpers::AllocatedBuffer buffer;
     VkImageView view = VK_NULL_HANDLE;
@@ -129,3 +133,168 @@ struct GPUFACE {
         rtg.helpers.destroy_image(std::move(image));
     }
 };
+
+int main(int argc, char **argv) {
+    try {
+        RTG::Configuration configuration;
+        
+        configuration.application_info = VkApplicationInfo{
+            .pApplicationName = "Cube Utility",
+            .applicationVersion = VK_MAKE_VERSION(0,0,0),
+            .pEngineName = "Unknown",
+            .engineVersion = VK_MAKE_VERSION(0,0,0),
+            .apiVersion = VK_API_VERSION_1_3
+        };
+
+        bool print_usage = false;
+
+        try {
+            configuration.parse(argc, argv);
+        } catch (std::runtime_error &e) {
+            std::cerr << "Failed to parse arguments:\n" << e.what() << std::endl;
+            print_usage = true;
+        }
+
+        if (print_usage) {
+            std::cerr << "Usage:" << std::endl;
+            RTG::Configuration::usage( [](const char *arg, const char *desc){
+                std::cerr << "    " << arg << "\n        " << desc << std::endl;
+            });
+            return 1;
+        }
+
+        configuration.headless = true;
+
+        RTG rtg(configuration);
+
+        // TODO: create comp pipeline
+        CubePipeline pipeline;
+        pipeline.create(rtg);
+
+        // TODO: load imgs / create desc
+
+        VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+        { // create dp
+            std::array< VkDescriptorPoolSize, 2 > pool_sizes{
+                VkDescriptorPoolSize{
+                    .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .descriptorCount = 6*2 + 1, // one for each iinput and output cube face + one for params
+                },
+                VkDescriptorPoolSize{
+                    .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                    .descriptorCount = 6*2, // one for each input and output cube face
+                },
+            };
+
+            VkDescriptorPoolCreateInfo create_info{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                .flags = 0,
+                .maxSets = 12 + 1,
+                .poolSizeCount = (uint32_t)(pool_sizes.size()),
+                .pPoolSizes = pool_sizes.data(),
+            };
+
+            VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &descriptor_pool) );
+        }
+
+        VkCommandPool command_pool = VK_NULL_HANDLE;
+        { // create cmd pool
+            VkCommandPoolCreateInfo create_info{
+                .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+                .queueFamilyIndex = rtg.graphics_queue_family.value(),
+            };
+            VK( vkCreateCommandPool(rtg.device, &create_info, nullptr, &command_pool) );
+        }
+
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        { // alloc cmd buffer from cmd pool
+            VkCommandBufferAllocateInfo alloc_info{
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                .commandPool = command_pool,
+                .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+                .commandBufferCount = 1,
+            };
+            VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &command_buffer) );
+        }
+
+        size_t size = 128;
+        std::vector< glm::vec3 > data(size * size, glm::vec3(1.f, 0.f, 1.f));
+
+        GPUFace in_face;
+        in_face.create(rtg, descriptor_pool, pipeline, (uint32_t)size, data.data());
+        GPUFace out_face;
+        out_face.create(rtg, descriptor_pool, pipeline, (uint32_t)size, data.data());
+
+        { // run pipeline
+            VK( vkResetCommandBuffer(command_buffer, 0) );
+
+            { // begin rec
+                VkCommandBufferBeginInfo begin_info{
+                    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+                };
+                VK( vkBeginCommandBuffer(command_buffer, &begin_info) );
+            }
+
+            // use cube pipeline
+            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
+
+            { // bind descriptor sets
+                std::array< VkDescriptorSet, 2 > descriptor_sets{
+                    in_face.descriptors,
+                    out_face.descriptors,
+                    // params_descriptors,
+                };
+                vkCmdBindDescriptorSets(
+                    command_buffer,
+                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                    pipeline.layout,
+                    0,
+                    (uint32_t)(descriptor_sets.size()), descriptor_sets.data(),
+                    0, nullptr
+                );
+            }
+
+            // run
+            vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)size, (uint32_t)size, 1);
+
+            // finish rec
+            VK( vkEndCommandBuffer(command_buffer) );
+
+            { // submit cmd buf
+                VkSubmitInfo submit_info{
+                    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                    .commandBufferCount = 1,
+                    .pCommandBuffers = &command_buffer,
+                };
+
+                VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, nullptr) );
+            }
+
+            VK( vkDeviceWaitIdle(rtg.device) );
+        }
+
+        std::cout << "Computing: done." << std::endl;
+
+        stbi_write_png("compute_shader_test.png", 128, 128, 3, data.data(), sizeof(glm::vec3));
+        std::cout << "Saved image." << std::endl;
+
+        in_face.destroy(rtg);
+        out_face.destroy(rtg);
+
+        vkDestroyDescriptorPool(rtg.device, descriptor_pool, nullptr);
+        descriptor_pool = VK_NULL_HANDLE;
+
+        vkDestroyCommandPool(rtg.device, command_pool, nullptr);
+        command_pool = VK_NULL_HANDLE;
+
+        pipeline.destroy(rtg);
+
+    } catch (std::exception &e) {
+        std::cerr << "Exception: " << e.what() << std::endl;
+        return 1;
+    }
+
+    return 0;
+}
