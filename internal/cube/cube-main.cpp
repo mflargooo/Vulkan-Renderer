@@ -1,6 +1,7 @@
 #include "../../RTG.hpp"
 #include "CubePipeline.hpp"
 #include "../../VK.hpp"
+#include "../../rgbe.hpp"
 
 #define __STDC_LIB_EXT1__
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -226,6 +227,13 @@ int main(int argc, char **argv) {
         GPUFace out_face;
         out_face.create(rtg, descriptor_pool, pipeline, (uint32_t)size, data.data());
 
+        Helpers::AllocatedBuffer results = rtg.helpers.create_buffer(
+            size * size * sizeof(glm::vec4),
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            Helpers::Mapped
+        );
+
         { // run pipeline
             VK( vkResetCommandBuffer(command_buffer, 0) );
 
@@ -259,6 +267,63 @@ int main(int argc, char **argv) {
             // run
             vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)size, (uint32_t)size, 1);
 
+            { // pull results
+                VkImageMemoryBarrier barrier{
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                    .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                    .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                    .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+                    .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, // for GPU -> CPU
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = out_face.image.handle,
+                    .subresourceRange{
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .baseMipLevel = 0,
+                        .levelCount = 1,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1,
+                    },
+                };
+
+                vkCmdPipelineBarrier(
+                    command_buffer,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, // dependencyFlags
+                    0, nullptr, // mem barrier count, ptr
+                    0, nullptr, // buf mem barrier count, ptr
+                    1, &barrier // img mem barrier count, ptr
+                );
+
+                VkBufferImageCopy region{
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource{
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel = 0,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1
+                    },
+                    .imageOffset{ .x = 0, .y = 0, .z = 0 }, // TODO: compute in blocks
+                    .imageExtent{
+                        .width = out_face.image.extent.width,
+                        .height = out_face.image.extent.height,
+                        .depth = 1,
+                    },
+                };
+
+                vkCmdCopyImageToBuffer(
+                    command_buffer,
+                    out_face.image.handle,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    results.handle,
+                    1,
+                    &region
+                );
+            }
+
             // finish rec
             VK( vkEndCommandBuffer(command_buffer) );
 
@@ -277,9 +342,15 @@ int main(int argc, char **argv) {
 
         std::cout << "Computing: done." << std::endl;
 
-        stbi_write_png("compute_shader_test.png", 128, 128, 3, data.data(), sizeof(glm::vec3));
-        std::cout << "Saved image." << std::endl;
+        // convert RGBA 32 to RGBA 8
+        std::vector< glm::u8vec4 > rgbe(size * size * 4, glm::u8vec4(0));
+        for (size_t i = 0; i < size * size; ++i) {
+            glm::vec4 linear_pixel = static_cast< glm::vec4 * >(results.allocation.mapped)[i];
+            rgbe[i] = glm::u8vec4(glm::clamp(linear_pixel * 255.f, 0.f, 255.f));
+        }
+        stbi_write_png("compute_shader_test.png", 128, 128, 4, rgbe.data(), sizeof(glm::u8vec4));        
 
+        rtg.helpers.destroy_buffer(std::move(results));
         in_face.destroy(rtg);
         out_face.destroy(rtg);
 

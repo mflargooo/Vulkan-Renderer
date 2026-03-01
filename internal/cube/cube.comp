@@ -21,6 +21,5 @@ void main() {
     int out_y = int(gl_GlobalInvocationID.y);
 
     vec3 acc = imageLoad(inFace, ivec2(out_x, out_y)).rgb;
-    acc = vec3(1.0, 0.0, 1.0);
-    imageStore(outFace, ivec2(out_x, out_y), vec4(acc, 0.0));
+    imageStore(outFace, ivec2(out_x, out_y), vec4(acc, 1.0));
 }
