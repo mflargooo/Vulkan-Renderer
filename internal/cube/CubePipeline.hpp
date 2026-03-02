@@ -20,9 +20,10 @@ struct CubePipeline {
     static_assert(sizeof(Face) == (3*4)*4, "Face descriptor is the expected size");
 
     struct Params {
+        uint32_t face_id;
         float roughness;
     };
-    static_assert(sizeof(Params) == 4, "Params descriptor is the expected size.");
+    static_assert(sizeof(Params) == 4+4, "Params descriptor is the expected size.");
 
     // no push consts
 

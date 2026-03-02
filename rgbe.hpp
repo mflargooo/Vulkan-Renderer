@@ -5,8 +5,8 @@
 #include <glm/gtc/packing.hpp>
 
 // from provided 15466 sample
-inline glm::vec3 linear_from_rgbe(glm::u8vec4 color) {
-    if (color == glm::u8vec4(0)) return glm::vec3(0.f);
+inline glm::highp_vec3 linear_from_rgbe(glm::u8vec4 color) {
+    if (color == glm::u8vec4(0)) return glm::highp_vec3(0.f);
 
     int e = color.a - 128;
     return glm::vec3{
@@ -16,8 +16,11 @@ inline glm::vec3 linear_from_rgbe(glm::u8vec4 color) {
     };
 };
 
-inline glm::u8vec4 rgbe_from_linear(glm::vec3 color) {
+inline glm::u8vec4 rgbe_from_linear(glm::highp_vec3 color) {
     // get largest e containing all r, g, b
+    if (glm::any(glm::isinf(color))) {
+        return glm::u8vec4(255, 255, 255, 255);
+    }
     float m = std::max(color.r, std::max(color.g, color.b));
 
     if (m <= 1e-32) {
@@ -26,18 +29,16 @@ inline glm::u8vec4 rgbe_from_linear(glm::vec3 color) {
 
     int e;
 
-    float s = 255.999f * (std::frexp(m, &e) / m);
+    float mantissa = std::frexp(m, &e);
+    float s = 256.f * mantissa / m;
 
-    if (e > 127) {
-        return glm::u8vec4(255);
-    }
-
-    return glm::u8vec4(
-        std::clamp(int32_t(color.r * s), 0, 255),
-        std::clamp(int32_t(color.g * s), 0, 255),
-        std::clamp(int32_t(color.b * s), 0, 255),
+    glm::u8vec4 rgbe = glm::u8vec4(
+        std::clamp(int64_t(color.r * s), 0LL, 255LL),
+        std::clamp(int64_t(color.g * s), 0LL, 255LL),
+        std::clamp(int64_t(color.b * s), 0LL, 255LL),
         uint8_t(e + 128)
     );
+    return rgbe;
 };
 
 inline uint64_t pack_r16g16b16a16_from_linear(glm::vec3 color) {

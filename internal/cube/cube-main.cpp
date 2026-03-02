@@ -219,14 +219,6 @@ int main(int argc, char **argv) {
         int face_width = cubemap_width, face_height = cubemap_width;
         face_height;
 
-        // convert rgbe to linear
-        std::vector< glm::vec3 > in_data;
-        in_data.reserve(cubemap_width * cubemap_width);
-        for (size_t i = 0; i < cubemap_width * cubemap_height; ++i) {
-            in_data.emplace_back(linear_from_rgbe(static_cast< glm::u8vec4 * >(src_img)[i]));
-        }
-        assert(in_data.size() == cubemap_width * cubemap_height);
-
         VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
         { // create dp
             std::array< VkDescriptorPoolSize, 3 > pool_sizes{
@@ -300,7 +292,7 @@ int main(int argc, char **argv) {
 
                 glm::u8vec4 pixel = static_cast< glm::u8vec4 * >(src_img)[f * face_height * face_width + j];
 
-                glm::vec3 rgb = linear_from_rgbe(pixel);
+                glm::highp_vec3 rgb = linear_from_rgbe(pixel);
 
                 pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
             }
@@ -393,6 +385,7 @@ int main(int argc, char **argv) {
         VkDescriptorSet params_descriptors;
         Helpers::AllocatedBuffer params_buffer;
         CubePipeline::Params params { 
+            .face_id = 0,
             .roughness = 1.0f 
         };
 
@@ -433,7 +426,7 @@ int main(int argc, char **argv) {
         }
 
         Helpers::AllocatedBuffer results = rtg.helpers.create_buffer(
-            out_face_size * out_face_size * 6 * sizeof(glm::vec4),
+            out_face_size * out_face_size * 6 * sizeof(glm::highp_vec4),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             Helpers::Mapped
@@ -454,6 +447,10 @@ int main(int argc, char **argv) {
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
 
             GPUFace &out_face = out_faces[f]; 
+
+            params.face_id = (uint32_t) f;
+            params.roughness = (uint32_t) .2;
+            std::memcpy(params_buffer.allocation.mapped, &params, sizeof(CubePipeline::Params));
 
             { // bind descriptor sets
                 std::array< VkDescriptorSet, 3 > descriptor_sets{
@@ -545,6 +542,8 @@ int main(int argc, char **argv) {
             }
 
             VK( vkDeviceWaitIdle(rtg.device) );
+
+            std::cout << "Finished face " << f << std::endl;
         }
 
         std::cout << "Computing: done." << std::endl;
@@ -552,7 +551,7 @@ int main(int argc, char **argv) {
         // convert RGBA 32 to RGBA 8
         std::vector< glm::u8vec4 > rgbe(out_face_size * out_face_size * 6);
         for (size_t i = 0; i < out_face_size * out_face_size * 6; ++i) {
-            rgbe[i] = rgbe_from_linear(static_cast< glm::vec4 * >(results.allocation.mapped)[i]);
+            rgbe[i] = rgbe_from_linear(static_cast< glm::highp_vec4 * >(results.allocation.mapped)[i]);
         }
         stbi_write_png(outfile, (int)out_face_size, (int)out_face_size * 6, 4, rgbe.data(), (int)(out_face_size * sizeof(glm::u8vec4)));        
 
