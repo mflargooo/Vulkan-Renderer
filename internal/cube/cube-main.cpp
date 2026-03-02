@@ -247,15 +247,15 @@ int main(int argc, char **argv) {
             VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &command_buffer) );
         }
 
-        size_t size = cubemap_width;
-        std::vector< glm::vec3 > data(size * size, glm::vec3(1.f, 0.f, 1.f));
+        size_t out_face_size = 128;
+        std::vector< glm::vec3 > data(out_face_size * out_face_size, glm::vec3(1.f, 0.f, 1.f));
 
         GPUFace in_faces[6];
         GPUFace out_faces[6];
         
         for (uint32_t i = 0; i < 6; ++i) {
             in_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)face_width, in_data.data() + face_width * face_height * i);
-            out_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)size, data.data());
+            out_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)out_face_size, data.data());
         }
 
         VkDescriptorSet params_descriptors;
@@ -298,13 +298,13 @@ int main(int argc, char **argv) {
         }
 
         Helpers::AllocatedBuffer results = rtg.helpers.create_buffer(
-            size * size * sizeof(glm::vec4),
+            out_face_size * out_face_size * 6 * sizeof(glm::vec4),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             Helpers::Mapped
         );
 
-        { // run pipeline
+        for (size_t f = 0; f < 6; ++f) { // run pipeline
             VK( vkResetCommandBuffer(command_buffer, 0) );
 
             { // begin rec
@@ -318,7 +318,6 @@ int main(int argc, char **argv) {
             // use cube pipeline
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
 
-            size_t f = 0;
             GPUFace &in_face = in_faces[f]; 
             GPUFace &out_face = out_faces[f]; 
            
@@ -339,7 +338,7 @@ int main(int argc, char **argv) {
             }
 
             // run
-            vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)size, (uint32_t)size, 1);
+            vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)out_face_size, (uint32_t)out_face_size, 1);
 
             { // pull results
                 VkImageMemoryBarrier barrier{
@@ -371,7 +370,7 @@ int main(int argc, char **argv) {
                 );
 
                 VkBufferImageCopy region{
-                    .bufferOffset = 0,
+                    .bufferOffset = out_face_size * out_face_size * sizeof(glm::vec4) * f,
                     .bufferRowLength = 0,
                     .bufferImageHeight = 0,
                     .imageSubresource{
@@ -417,13 +416,11 @@ int main(int argc, char **argv) {
         std::cout << "Computing: done." << std::endl;
 
         // convert RGBA 32 to RGBA 8
-        std::vector< glm::u8vec4 > rgbe;
-        rgbe.reserve(size * size);
-        for (size_t i = 0; i < size * size; ++i) {
-            //rgbe[i] = rgbe_from_linear(static_cast< glm::vec4 * >(results.allocation.mapped)[i]);
-            rgbe.emplace_back(static_cast< glm::u8vec4 * >(src_img)[i]);
+        std::vector< glm::u8vec4 > rgbe(out_face_size * out_face_size * 6);
+        for (size_t i = 0; i < out_face_size * out_face_size * 6; ++i) {
+            rgbe[i] = rgbe_from_linear(static_cast< glm::vec4 * >(results.allocation.mapped)[i]);
         }
-        stbi_write_png(outfile, (int)cubemap_width, (int)cubemap_width, 4, rgbe.data(), cubemap_width * sizeof(glm::u8vec4));        
+        stbi_write_png(outfile, (int)out_face_size, (int)out_face_size * 6, 4, rgbe.data(), (int)(out_face_size * sizeof(glm::u8vec4)));        
 
         stbi_image_free(src_img);
         rtg.helpers.destroy_buffer(std::move(results));

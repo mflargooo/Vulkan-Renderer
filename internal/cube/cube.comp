@@ -79,5 +79,5 @@ void main() {
 
     vec3 final_color = weight > 0.0 ? prefiltered_color / weight : vec3(1.0);
     imageStore(outFace, ivec2(out_x, out_y), vec4(final_color, 1.0));
-    imageStore(outFace, ivec2(out_x, out_y), imageLoad(inFace, ivec2(out_x, out_y)));
+    imageStore(outFace, ivec2(out_x, out_y), imageLoad(inFace, ivec2(uv * imageSize(inFace))));
 }
