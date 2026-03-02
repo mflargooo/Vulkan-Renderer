@@ -1,3 +1,4 @@
+// from the provided sample code
 #include "CubePipeline.hpp"
 
 #include "../../Helpers.hpp"
@@ -38,7 +39,7 @@ void CubePipeline::create(RTG &rtg) {
     { // set 2 layout for info needed for integration
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
             VkDescriptorSetLayoutBinding{
-                .binding = 0,
+                .binding = 2,
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,

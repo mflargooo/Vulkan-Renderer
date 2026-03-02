@@ -3,6 +3,9 @@
 #include "../../VK.hpp"
 #include "../../rgbe.hpp"
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "../../external/stb/stb_image.h"
+
 #define __STDC_LIB_EXT1__
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../../external/stb/stb_image_write.h"
@@ -11,6 +14,7 @@
 
 #include <iostream>
 
+// from the provided sample code
 struct GPUFace {
     Helpers::AllocatedImage image;
     Helpers::AllocatedBuffer buffer;
@@ -147,7 +151,7 @@ int main(int argc, char **argv) {
             .apiVersion = VK_API_VERSION_1_3
         };
 
-        bool print_usage = false;
+        /* bool print_usage = false;
 
         try {
             configuration.parse(argc, argv);
@@ -162,17 +166,41 @@ int main(int argc, char **argv) {
                 std::cerr << "    " << arg << "\n        " << desc << std::endl;
             });
             return 1;
-        }
+        } */
 
         configuration.headless = true;
 
         RTG rtg(configuration);
 
-        // TODO: create comp pipeline
         CubePipeline pipeline;
         pipeline.create(rtg);
 
-        // TODO: load imgs / create desc
+        const char *infile = argv[1];
+        std::string type = argv[2];
+        const char *outfile = argv[3];
+
+        int cubemap_width, cubemap_height, cubemap_channels;
+        void *src_img = (void *)stbi_load(infile, &cubemap_width, &cubemap_height, &cubemap_channels, 4);
+        if (!src_img) {
+            std::cerr << "Failed to load " << infile << std::endl;
+            return 1;
+        }
+        
+        if (cubemap_height < cubemap_width && cubemap_width == cubemap_height / 6) {
+            std::cerr << "Expected cubemap with 6 equal sized square faces as a vertical strip!" << std::endl;
+            return 1;
+        }
+
+        int face_width = cubemap_width, face_height = cubemap_width;
+        face_height;
+
+        // convert rgbe to linear
+        std::vector< glm::vec3 > in_data;
+        in_data.reserve(cubemap_width * cubemap_width);
+        for (size_t i = 0; i < cubemap_width * cubemap_height; ++i) {
+            in_data.emplace_back(linear_from_rgbe(static_cast< glm::u8vec4 * >(src_img)[i]));
+        }
+        assert(in_data.size() == cubemap_width * cubemap_height);
 
         VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
         { // create dp
@@ -219,13 +247,55 @@ int main(int argc, char **argv) {
             VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &command_buffer) );
         }
 
-        size_t size = 128;
+        size_t size = cubemap_width;
         std::vector< glm::vec3 > data(size * size, glm::vec3(1.f, 0.f, 1.f));
 
-        GPUFace in_face;
-        in_face.create(rtg, descriptor_pool, pipeline, (uint32_t)size, data.data());
-        GPUFace out_face;
-        out_face.create(rtg, descriptor_pool, pipeline, (uint32_t)size, data.data());
+        GPUFace in_faces[6];
+        GPUFace out_faces[6];
+        
+        for (uint32_t i = 0; i < 6; ++i) {
+            in_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)face_width, in_data.data() + face_width * face_height * i);
+            out_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)size, data.data());
+        }
+
+        VkDescriptorSet params_descriptors;
+        Helpers::AllocatedBuffer params_buffer;
+        CubePipeline::Params params { .roughness = 1.0f };
+        { // create params descriptors
+            params_buffer = rtg.helpers.create_buffer(
+                sizeof(CubePipeline::Params),
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                Helpers::Mapped  
+            );
+
+            std::memcpy(params_buffer.allocation.mapped, &params, sizeof(CubePipeline::Params));
+
+            VkDescriptorSetAllocateInfo alloc_info{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                .descriptorPool = descriptor_pool,
+                .descriptorSetCount = 1,
+                .pSetLayouts = &pipeline.set2_params
+            };
+
+            vkAllocateDescriptorSets(rtg.device, &alloc_info, &params_descriptors);
+
+            VkDescriptorBufferInfo buffer_info{
+                .buffer = params_buffer.handle,
+                .offset = 0,
+                .range = sizeof(CubePipeline::Params),
+            };
+
+            VkWriteDescriptorSet write{
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = params_descriptors,
+                .dstBinding = 2,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .pBufferInfo = &buffer_info,
+            };
+            vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+        }
 
         Helpers::AllocatedBuffer results = rtg.helpers.create_buffer(
             size * size * sizeof(glm::vec4),
@@ -248,11 +318,15 @@ int main(int argc, char **argv) {
             // use cube pipeline
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
 
+            size_t f = 0;
+            GPUFace &in_face = in_faces[f]; 
+            GPUFace &out_face = out_faces[f]; 
+           
             { // bind descriptor sets
-                std::array< VkDescriptorSet, 2 > descriptor_sets{
+                std::array< VkDescriptorSet, 3 > descriptor_sets{
                     in_face.descriptors,
                     out_face.descriptors,
-                    // params_descriptors,
+                    params_descriptors,
                 };
                 vkCmdBindDescriptorSets(
                     command_buffer,
@@ -343,16 +417,21 @@ int main(int argc, char **argv) {
         std::cout << "Computing: done." << std::endl;
 
         // convert RGBA 32 to RGBA 8
-        std::vector< glm::u8vec4 > rgbe(size * size * 4, glm::u8vec4(0));
+        std::vector< glm::u8vec4 > rgbe;
+        rgbe.reserve(size * size);
         for (size_t i = 0; i < size * size; ++i) {
-            glm::vec4 linear_pixel = static_cast< glm::vec4 * >(results.allocation.mapped)[i];
-            rgbe[i] = glm::u8vec4(glm::clamp(linear_pixel * 255.f, 0.f, 255.f));
+            //rgbe[i] = rgbe_from_linear(static_cast< glm::vec4 * >(results.allocation.mapped)[i]);
+            rgbe.emplace_back(static_cast< glm::u8vec4 * >(src_img)[i]);
         }
-        stbi_write_png("compute_shader_test.png", 128, 128, 4, rgbe.data(), sizeof(glm::u8vec4));        
+        stbi_write_png(outfile, (int)cubemap_width, (int)cubemap_width, 4, rgbe.data(), cubemap_width * sizeof(glm::u8vec4));        
 
+        stbi_image_free(src_img);
         rtg.helpers.destroy_buffer(std::move(results));
-        in_face.destroy(rtg);
-        out_face.destroy(rtg);
+        rtg.helpers.destroy_buffer(std::move(params_buffer));
+        for (uint32_t i = 0; i < 6; ++i) {
+            in_faces[i].destroy(rtg);
+            out_faces[i].destroy(rtg);
+        }
 
         vkDestroyDescriptorPool(rtg.device, descriptor_pool, nullptr);
         descriptor_pool = VK_NULL_HANDLE;
