@@ -11,7 +11,26 @@ static uint32_t cube_code[] =
 void CubePipeline::create(RTG &rtg) {
     VkShaderModule module = rtg.helpers.create_shader_module(cube_code);
 
-    { // set_0in, for input face
+    { // the set0_environment layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_environment) );
+    }
+
+    { // set_1 output face
         std::array< VkDescriptorSetLayoutBinding, 2 > bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
@@ -33,7 +52,7 @@ void CubePipeline::create(RTG &rtg) {
             .pBindings = bindings.data(),
         };
 
-        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set01_face) );
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set1_face) );
     }
 
     { // set 2 layout for info needed for integration
@@ -57,8 +76,8 @@ void CubePipeline::create(RTG &rtg) {
 
     { // create pipeline layout
         std::array< VkDescriptorSetLayout, 3 > layouts{
-            set01_face,
-            set01_face,
+            set0_environment,
+            set1_face,
             set2_params,
         };
 
@@ -109,8 +128,13 @@ void CubePipeline::destroy(RTG &rtg) {
         set2_params = VK_NULL_HANDLE;
     } 
 
-    if (set01_face != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(rtg.device, set01_face, nullptr);
-        set01_face = VK_NULL_HANDLE;
+    if (set1_face != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set1_face, nullptr);
+        set1_face = VK_NULL_HANDLE;
+    }
+
+    if (set0_environment != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set0_environment, nullptr);
+        set0_environment = VK_NULL_HANDLE;
     }
 }

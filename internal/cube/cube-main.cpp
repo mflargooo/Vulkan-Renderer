@@ -20,7 +20,7 @@ struct GPUFace {
     Helpers::AllocatedBuffer buffer;
     VkImageView view = VK_NULL_HANDLE;
     VkDescriptorSet descriptors = VK_NULL_HANDLE;
-    void create(RTG &rtg, VkDescriptorPool descriptor_pool, CubePipeline const &pipeline, uint32_t const size, glm::vec3 * const data) {
+    void create(RTG &rtg, VkDescriptorPool descriptor_pool, CubePipeline const &pipeline, uint32_t const size, glm::vec3 * const data, uint32_t face_id) {
         std::vector< glm::vec4 > data_padded;
         data_padded.reserve(size*size);
         for (uint32_t i = 0; i < size*size; ++i) {
@@ -48,22 +48,47 @@ struct GPUFace {
 
             CubePipeline::Face face_info{};
 
-            glm::vec3 s = glm::vec3(0.f, 0.f, -1.f);
-            glm::vec3 t = glm::vec3(0.f, -1.f, -0.f);
-            glm::vec3 center = glm::vec3(1.f, 0.f, 0.f);
+            static const glm::vec3 centers[6] = {
+                glm::vec3( 1.f,  0.f,  0.f), // +x
+                glm::vec3(-1.f,  0.f,  0.f), // -x
+                glm::vec3( 0.f,  1.f,  0.f), // +y
+                glm::vec3( 0.f, -1.f,  0.f), // -y
+                glm::vec3( 0.f,  0.f,  1.f), // +z
+                glm::vec3( 0.f,  0.f, -1.f)  // -z
+            };
+            static const glm::vec3 basis_s[6] = {
+                glm::vec3( 0.f,  0.f, -1.f), // +x
+                glm::vec3( 0.f,  0.f,  1.f), // -x
+                glm::vec3( 1.f,  0.f,  0.f), // +y
+                glm::vec3( 1.f,  0.f,  0.f), // -y
+                glm::vec3( 1.f,  0.f,  0.f), // +z
+                glm::vec3(-1.f,  0.f,  0.f)  // -z
+            };
+            static const glm::vec3 basis_t[6] = {
+                glm::vec3( 0.f, -1.f,  0.f), // +x
+                glm::vec3( 0.f, -1.f,  0.f), // -x
+                glm::vec3( 0.f,  0.f,  1.f), // +y
+                glm::vec3( 0.f,  0.f, -1.f), // -y
+                glm::vec3( 0.f, -1.f,  0.f), // +z
+                glm::vec3( 0.f, -1.f,  0.f)  // -z
+            };
 
-            face_info.WORLD_FROM_PX[0][0] = 2.f * s.x / float(size);
-            face_info.WORLD_FROM_PX[0][1] = 2.f * s.y / float(size);
-            face_info.WORLD_FROM_PX[0][2] = 2.f * s.z / float(size);
+            glm::vec3 s = basis_s[face_id];
+            glm::vec3 t = basis_t[face_id];
+            glm::vec3 center = centers[face_id];
 
-            face_info.WORLD_FROM_PX[1][0] = 2.f * t.x / float(size);
-            face_info.WORLD_FROM_PX[1][1] = 2.f * t.y / float(size);
-            face_info.WORLD_FROM_PX[1][2] = 2.f * t.z / float(size);
+			face_info.WORLD_FROM_PX.m0 = 2.f * s.x / float(size);
+			face_info.WORLD_FROM_PX.m1 = 2.f * s.y / float(size);
+			face_info.WORLD_FROM_PX.m2 = 2.f * s.z / float(size);
 
-            float corner = 1.f - 2.f / float(size) * .5f;
-            face_info.WORLD_FROM_PX[2][0] = center.x - corner * s.x - corner * t.x;
-            face_info.WORLD_FROM_PX[2][1] = center.y - corner * s.y - corner * t.y;
-            face_info.WORLD_FROM_PX[2][2] = center.z - corner * s.z - corner * t.z;
+			face_info.WORLD_FROM_PX.m3 = 2.f * t.x / float(size);
+			face_info.WORLD_FROM_PX.m4 = 2.f * t.y / float(size);
+			face_info.WORLD_FROM_PX.m5 = 2.f * t.z / float(size);
+
+			float corner = 1.f - 2.f / float(size) * .5f;
+			face_info.WORLD_FROM_PX.m6 = center.x - corner * s.x - corner * t.x;
+			face_info.WORLD_FROM_PX.m7 = center.y - corner * s.y - corner * t.y;
+			face_info.WORLD_FROM_PX.m8 = center.z - corner * s.z - corner * t.z;
 
             rtg.helpers.transfer_to_buffer( &face_info, sizeof(face_info), buffer );
         }
@@ -93,7 +118,7 @@ struct GPUFace {
                     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
                     .descriptorPool = descriptor_pool,
                     .descriptorSetCount = 1,
-                    .pSetLayouts = &pipeline.set01_face,
+                    .pSetLayouts = &pipeline.set1_face,
                 };
                 VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptors) );
             }
@@ -204,21 +229,25 @@ int main(int argc, char **argv) {
 
         VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
         { // create dp
-            std::array< VkDescriptorPoolSize, 2 > pool_sizes{
+            std::array< VkDescriptorPoolSize, 3 > pool_sizes{
+                VkDescriptorPoolSize{
+                    .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .descriptorCount = 1, // one for the env
+                },
                 VkDescriptorPoolSize{
                     .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .descriptorCount = 6*2 + 1, // one for each iinput and output cube face + one for params
+                    .descriptorCount = 6 + 1, // one for each iinput and output cube face + one for params
                 },
                 VkDescriptorPoolSize{
                     .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                    .descriptorCount = 6*2, // one for each input and output cube face
+                    .descriptorCount = 6, // one for each input and output cube face
                 },
             };
 
             VkDescriptorPoolCreateInfo create_info{
                 .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                 .flags = 0,
-                .maxSets = 12 + 1,
+                .maxSets = 1 + 6 + 1,
                 .poolSizeCount = (uint32_t)(pool_sizes.size()),
                 .pPoolSizes = pool_sizes.data(),
             };
@@ -247,20 +276,126 @@ int main(int argc, char **argv) {
             VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &command_buffer) );
         }
 
-        size_t out_face_size = 128;
+        size_t out_face_size = 512;
         std::vector< glm::vec3 > data(out_face_size * out_face_size, glm::vec3(1.f, 0.f, 1.f));
 
-        GPUFace in_faces[6];
+
+        Helpers::AllocatedImage environment = rtg.helpers.create_cubemap(
+            VkExtent2D{ .width = (uint32_t)face_width, .height = (uint32_t)face_width },
+            VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            Helpers::Unmapped
+        );
+
+        { // upload environment
+            std::vector< uint64_t > pixels;
+            pixels.reserve(cubemap_width * cubemap_height);
+            for (size_t i = 0; i < cubemap_width * cubemap_height; ++i) {
+                // switch from cubemap render -> vulkan convention
+                // rotate cubemap face conventions to upright
+                size_t f = i / (face_width * face_height); // current face
+                size_t j = i % (face_width * face_height); // jth pixel of face
+
+                glm::u8vec4 pixel = static_cast< glm::u8vec4 * >(src_img)[f * face_height * face_width + j];
+
+                glm::vec3 rgb = linear_from_rgbe(pixel);
+
+                pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
+            }
+            rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * cubemap_width * cubemap_height, environment);
+        }
+
+        VkImageView environment_view = VK_NULL_HANDLE;
+        VkSampler environment_sampler = VK_NULL_HANDLE;
+        VkDescriptorSet environment_descriptor = VK_NULL_HANDLE;
+
+        { // make image views for the cubemaps
+            VkImageViewCreateInfo create_info{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .flags = 0,
+                .image = environment.handle,
+                .viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+                .format = environment.format,
+                // .components sets swizzling and is fine when zero inited
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 6,
+                },
+            };
+
+            VK( vkCreateImageView(rtg.device, &create_info, nullptr, &environment_view) );
+        }
+
+        { // make a sampler for the cubemaps
+            VkSamplerCreateInfo create_info{
+                .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                .flags = 0,
+                .magFilter = VK_FILTER_LINEAR,
+                .minFilter = VK_FILTER_LINEAR,
+                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                .mipLodBias = 0.f,
+                .anisotropyEnable  = VK_FALSE,
+                .maxAnisotropy = 0.f,
+                .compareEnable = VK_FALSE,
+                .compareOp = VK_COMPARE_OP_ALWAYS,
+                .minLod = 0.f,
+                .maxLod = 0.f,
+                .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+                .unnormalizedCoordinates = VK_FALSE,
+            };
+            VK( vkCreateSampler(rtg.device, &create_info, nullptr, &environment_sampler) );
+        }
+
+        { // allocate and write the cubemap descriptor sets
+            // allocate the descriptors (using same alloc_info)
+            VkDescriptorSetAllocateInfo alloc_info{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                .descriptorPool = descriptor_pool,
+                .descriptorSetCount = 1,
+                .pSetLayouts = &pipeline.set0_environment,
+            };
+            VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &environment_descriptor) );
+
+            // write descriptor for cubemaps
+
+            VkDescriptorImageInfo image_info{
+                .sampler = environment_sampler,
+                .imageView = environment_view,
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+            VkWriteDescriptorSet write_info{
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = environment_descriptor,
+                .dstBinding = 0,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = &image_info,
+            };
+
+            vkUpdateDescriptorSets( rtg.device, 1, &write_info, 0, nullptr );
+        }
+            
         GPUFace out_faces[6];
         
         for (uint32_t i = 0; i < 6; ++i) {
-            in_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)face_width, in_data.data() + face_width * face_height * i);
-            out_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)out_face_size, data.data());
+            out_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)out_face_size, data.data(), i);
         }
 
         VkDescriptorSet params_descriptors;
         Helpers::AllocatedBuffer params_buffer;
-        CubePipeline::Params params { .roughness = 1.0f };
+        CubePipeline::Params params { 
+            .roughness = 1.0f 
+        };
+
         { // create params descriptors
             params_buffer = rtg.helpers.create_buffer(
                 sizeof(CubePipeline::Params),
@@ -286,7 +421,7 @@ int main(int argc, char **argv) {
                 .range = sizeof(CubePipeline::Params),
             };
 
-            VkWriteDescriptorSet write{
+            VkWriteDescriptorSet write_info{
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = params_descriptors,
                 .dstBinding = 2,
@@ -294,7 +429,7 @@ int main(int argc, char **argv) {
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                 .pBufferInfo = &buffer_info,
             };
-            vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+            vkUpdateDescriptorSets(rtg.device, 1, &write_info, 0, nullptr);
         }
 
         Helpers::AllocatedBuffer results = rtg.helpers.create_buffer(
@@ -318,12 +453,11 @@ int main(int argc, char **argv) {
             // use cube pipeline
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
 
-            GPUFace &in_face = in_faces[f]; 
             GPUFace &out_face = out_faces[f]; 
-           
+
             { // bind descriptor sets
                 std::array< VkDescriptorSet, 3 > descriptor_sets{
-                    in_face.descriptors,
+                    environment_descriptor,
                     out_face.descriptors,
                     params_descriptors,
                 };
@@ -338,7 +472,7 @@ int main(int argc, char **argv) {
             }
 
             // run
-            vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)out_face_size, (uint32_t)out_face_size, 1);
+            vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)out_face_size/8, (uint32_t)out_face_size/8, 1);
 
             { // pull results
                 VkImageMemoryBarrier barrier{
@@ -425,10 +559,17 @@ int main(int argc, char **argv) {
         stbi_image_free(src_img);
         rtg.helpers.destroy_buffer(std::move(results));
         rtg.helpers.destroy_buffer(std::move(params_buffer));
+        rtg.helpers.destroy_cubemap(std::move(environment));
         for (uint32_t i = 0; i < 6; ++i) {
-            in_faces[i].destroy(rtg);
             out_faces[i].destroy(rtg);
         }
+
+        if (environment_sampler) {
+            vkDestroySampler(rtg.device, environment_sampler, nullptr);
+            environment_sampler = VK_NULL_HANDLE;
+	    }
+        vkDestroyImageView(rtg.device, environment_view, nullptr);
+        environment_view = VK_NULL_HANDLE;
 
         vkDestroyDescriptorPool(rtg.device, descriptor_pool, nullptr);
         descriptor_pool = VK_NULL_HANDLE;
