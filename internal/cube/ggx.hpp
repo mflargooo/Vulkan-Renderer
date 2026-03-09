@@ -1,13 +1,12 @@
+#pragma once
+
 #include "../../RTG.hpp"
 #include "CubePipeline.hpp"
 #include "../../VK.hpp"
 #include "../../rgbe.hpp"
 
-#define STB_IMAGE_IMPLEMENTATION
 #include "../../external/stb/stb_image.h"
 
-#define __STDC_LIB_EXT1__
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../../external/stb/stb_image_write.h"
 
 #include <glm/glm.hpp>
@@ -164,7 +163,7 @@ struct GPUFace {
     }
 };
 
-int main(int argc, char **argv) {
+void ggx(const char *infile, const char *outfile) {
     try {
         RTG::Configuration configuration;
         
@@ -200,32 +199,26 @@ int main(int argc, char **argv) {
         CubePipeline pipeline;
         pipeline.create(rtg);
 
-        const char *infile = argv[1];
-        std::string type = argv[2];
-        const char *outfile = argv[3];
+        std::string s_outfile = outfile;
 
         int cubemap_width, cubemap_height, cubemap_channels;
         void *src_img = (void *)stbi_load(infile, &cubemap_width, &cubemap_height, &cubemap_channels, 4);
         if (!src_img) {
             std::cerr << "Failed to load " << infile << std::endl;
-            return 1;
+            exit(1);
         }
         
         if (cubemap_height < cubemap_width && cubemap_width == cubemap_height / 6) {
             std::cerr << "Expected cubemap with 6 equal sized square faces as a vertical strip!" << std::endl;
-            return 1;
+            exit(1);
         }
 
         int face_width = cubemap_width, face_height = cubemap_width;
         face_height;
 
-        // convert rgbe to linear
-        std::vector< glm::vec3 > in_data;
-        in_data.reserve(cubemap_width * cubemap_width);
-        for (size_t i = 0; i < cubemap_width * cubemap_height; ++i) {
-            in_data.emplace_back(linear_from_rgbe(static_cast< glm::u8vec4 * >(src_img)[i]));
-        }
-        assert(in_data.size() == cubemap_width * cubemap_height);
+        // smallest mip size is 32x32
+        uint32_t mips = (uint32_t)std::floor(std::log2f((float)face_width) - std::log2f(32.f)) + 1;
+
 
         VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
         { // create dp
@@ -247,7 +240,7 @@ int main(int argc, char **argv) {
             VkDescriptorPoolCreateInfo create_info{
                 .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                 .flags = 0,
-                .maxSets = 1 + 6 + 1,
+                .maxSets = (1 + 6 + 1) * mips,
                 .poolSizeCount = (uint32_t)(pool_sizes.size()),
                 .pPoolSizes = pool_sizes.data(),
             };
@@ -275,10 +268,6 @@ int main(int argc, char **argv) {
             };
             VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &command_buffer) );
         }
-
-        size_t out_face_size = 512;
-        std::vector< glm::vec3 > data(out_face_size * out_face_size, glm::vec3(1.f, 0.f, 1.f));
-
 
         Helpers::AllocatedImage environment = rtg.helpers.create_cubemap(
             VkExtent2D{ .width = (uint32_t)face_width, .height = (uint32_t)face_width },
@@ -384,12 +373,6 @@ int main(int argc, char **argv) {
             vkUpdateDescriptorSets( rtg.device, 1, &write_info, 0, nullptr );
         }
             
-        GPUFace out_faces[6];
-        
-        for (uint32_t i = 0; i < 6; ++i) {
-            out_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)out_face_size, data.data(), i);
-        }
-
         VkDescriptorSet params_descriptors;
         Helpers::AllocatedBuffer params_buffer;
         CubePipeline::Params params { 
@@ -403,8 +386,6 @@ int main(int argc, char **argv) {
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 Helpers::Mapped  
             );
-
-            std::memcpy(params_buffer.allocation.mapped, &params, sizeof(CubePipeline::Params));
 
             VkDescriptorSetAllocateInfo alloc_info{
                 .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -432,142 +413,182 @@ int main(int argc, char **argv) {
             vkUpdateDescriptorSets(rtg.device, 1, &write_info, 0, nullptr);
         }
 
-        Helpers::AllocatedBuffer results = rtg.helpers.create_buffer(
-            out_face_size * out_face_size * 6 * sizeof(glm::vec4),
-            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            Helpers::Mapped
-        );
+        for (size_t m = 1; m < mips; ++m) {
+            size_t out_face_size = face_width / (1 << m);
+            std::vector< glm::vec3 > data(out_face_size * out_face_size, glm::vec3(1.f, 0.f, 1.f));
 
-        for (size_t f = 0; f < 6; ++f) { // run pipeline
-            VK( vkResetCommandBuffer(command_buffer, 0) );
-
-            { // begin rec
-                VkCommandBufferBeginInfo begin_info{
-                    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-                };
-                VK( vkBeginCommandBuffer(command_buffer, &begin_info) );
+            GPUFace out_faces[6];
+        
+            for (uint32_t i = 0; i < 6; ++i) {
+                out_faces[i].create(rtg, descriptor_pool, pipeline, (uint32_t)out_face_size, data.data(), i);
             }
 
-            // use cube pipeline
-            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
+            params.roughness = (float)m / (float)mips;
+            std::memcpy(params_buffer.allocation.mapped, &params, sizeof(CubePipeline::Params));
 
-            GPUFace &out_face = out_faces[f]; 
+            Helpers::AllocatedBuffer results = rtg.helpers.create_buffer(
+                out_face_size * out_face_size * 6 * sizeof(glm::vec4),
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                Helpers::Mapped
+            );
 
-            { // bind descriptor sets
-                std::array< VkDescriptorSet, 3 > descriptor_sets{
-                    environment_descriptor,
-                    out_face.descriptors,
-                    params_descriptors,
-                };
-                vkCmdBindDescriptorSets(
-                    command_buffer,
-                    VK_PIPELINE_BIND_POINT_COMPUTE,
-                    pipeline.layout,
-                    0,
-                    (uint32_t)(descriptor_sets.size()), descriptor_sets.data(),
-                    0, nullptr
-                );
+            for (size_t f = 0; f < 6; ++f) { // run pipeline
+                VK( vkResetCommandBuffer(command_buffer, 0) );
+
+                { // begin rec
+                    VkCommandBufferBeginInfo begin_info{
+                        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+                    };
+                    VK( vkBeginCommandBuffer(command_buffer, &begin_info) );
+                }
+
+                // use cube pipeline
+                vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
+
+                GPUFace &out_face = out_faces[f]; 
+
+                { // bind descriptor sets
+                    std::array< VkDescriptorSet, 3 > descriptor_sets{
+                        environment_descriptor,
+                        out_face.descriptors,
+                        params_descriptors,
+                    };
+                    vkCmdBindDescriptorSets(
+                        command_buffer,
+                        VK_PIPELINE_BIND_POINT_COMPUTE,
+                        pipeline.layout,
+                        0,
+                        (uint32_t)(descriptor_sets.size()), descriptor_sets.data(),
+                        0, nullptr
+                    );
+                }
+
+                // run
+                vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)out_face_size/8, (uint32_t)out_face_size/8, 1);
+
+                { // pull results
+                    VkImageMemoryBarrier barrier{
+                        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                        .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+                        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, // for GPU -> CPU
+                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .image = out_face.image.handle,
+                        .subresourceRange{
+                            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                            .baseMipLevel = 0,
+                            .levelCount = 1,
+                            .baseArrayLayer = 0,
+                            .layerCount = 1,
+                        },
+                    };
+
+                    vkCmdPipelineBarrier(
+                        command_buffer,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0, // dependencyFlags
+                        0, nullptr, // mem barrier count, ptr
+                        0, nullptr, // buf mem barrier count, ptr
+                        1, &barrier // img mem barrier count, ptr
+                    );
+                } 
+
+                {
+                    VkBufferImageCopy region{
+                        .bufferOffset = out_face_size * out_face_size * sizeof(glm::vec4) * f,
+                        .bufferRowLength = 0,
+                        .bufferImageHeight = 0,
+                        .imageSubresource{
+                            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                            .mipLevel = 0,
+                            .baseArrayLayer = 0,
+                            .layerCount = 1
+                        },
+                        .imageOffset{ .x = 0, .y = 0, .z = 0 }, // TODO: compute in blocks
+                        .imageExtent{
+                            .width = out_face.image.extent.width,
+                            .height = out_face.image.extent.height,
+                            .depth = 1,
+                        },
+                    };
+
+                    vkCmdCopyImageToBuffer(
+                        command_buffer,
+                        out_face.image.handle,
+                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        results.handle,
+                        1,
+                        &region
+                    );
+                }
+
+                {
+                    VkBufferMemoryBarrier barrier{
+                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+                        .buffer = results.handle,
+                        .offset = 0,
+                        .size = VK_WHOLE_SIZE
+                    };
+
+                    vkCmdPipelineBarrier(
+                        command_buffer,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_HOST_BIT,
+                        0, 
+                        0, nullptr, 
+                        1, &barrier, 
+                        0, nullptr
+                    );
+                }
+
+                // finish rec
+                VK( vkEndCommandBuffer(command_buffer) );
+
+                { // submit cmd buf
+                    VkSubmitInfo submit_info{
+                        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                        .commandBufferCount = 1,
+                        .pCommandBuffers = &command_buffer,
+                    };
+
+                    VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, nullptr) );
+                }
+
+                VK( vkDeviceWaitIdle(rtg.device) );
             }
 
-            // run
-            vkCmdDispatchBase(command_buffer, 0, 0, 1, (uint32_t)out_face_size/8, (uint32_t)out_face_size/8, 1);
+            std::cout << "Mip " << m << "/" << mips-1 << " done." << std::endl;
 
-            { // pull results
-                VkImageMemoryBarrier barrier{
-                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                    .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-                    .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-                    .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-                    .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, // for GPU -> CPU
-                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                    .image = out_face.image.handle,
-                    .subresourceRange{
-                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                        .baseMipLevel = 0,
-                        .levelCount = 1,
-                        .baseArrayLayer = 0,
-                        .layerCount = 1,
-                    },
-                };
-
-                vkCmdPipelineBarrier(
-                    command_buffer,
-                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, // dependencyFlags
-                    0, nullptr, // mem barrier count, ptr
-                    0, nullptr, // buf mem barrier count, ptr
-                    1, &barrier // img mem barrier count, ptr
-                );
-
-                VkBufferImageCopy region{
-                    .bufferOffset = out_face_size * out_face_size * sizeof(glm::vec4) * f,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource{
-                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                        .mipLevel = 0,
-                        .baseArrayLayer = 0,
-                        .layerCount = 1
-                    },
-                    .imageOffset{ .x = 0, .y = 0, .z = 0 }, // TODO: compute in blocks
-                    .imageExtent{
-                        .width = out_face.image.extent.width,
-                        .height = out_face.image.extent.height,
-                        .depth = 1,
-                    },
-                };
-
-                vkCmdCopyImageToBuffer(
-                    command_buffer,
-                    out_face.image.handle,
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    results.handle,
-                    1,
-                    &region
-                );
+            // convert RGBA 32 to RGBA 8
+            std::vector< glm::u8vec4 > rgbe(out_face_size * out_face_size * 6);
+            for (size_t i = 0; i < out_face_size * out_face_size * 6; ++i) {
+                rgbe[i] = rgbe_from_linear(static_cast< glm::vec4 * >(results.allocation.mapped)[i]);
             }
 
-            // finish rec
-            VK( vkEndCommandBuffer(command_buffer) );
+            std::string mip_outfile = s_outfile.substr(0, s_outfile.size() - 3) + std::to_string(m) + ".png";
+            stbi_write_png(mip_outfile.data(), (int)out_face_size, (int)out_face_size * 6, 4, rgbe.data(), (int)(out_face_size * sizeof(glm::u8vec4)));        
+            rtg.helpers.destroy_buffer(std::move(results));
 
-            { // submit cmd buf
-                VkSubmitInfo submit_info{
-                    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                    .commandBufferCount = 1,
-                    .pCommandBuffers = &command_buffer,
-                };
-
-                VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, nullptr) );
+            for (size_t f = 0; f < 6; ++f) {
+                out_faces[f].destroy(rtg);
             }
-
-            VK( vkDeviceWaitIdle(rtg.device) );
-        }
-
-        std::cout << "Computing: done." << std::endl;
-
-        // convert RGBA 32 to RGBA 8
-        std::vector< glm::u8vec4 > rgbe(out_face_size * out_face_size * 6);
-        for (size_t i = 0; i < out_face_size * out_face_size * 6; ++i) {
-            rgbe[i] = rgbe_from_linear(static_cast< glm::vec4 * >(results.allocation.mapped)[i]);
-        }
-        stbi_write_png(outfile, (int)out_face_size, (int)out_face_size * 6, 4, rgbe.data(), (int)(out_face_size * sizeof(glm::u8vec4)));        
+        } 
 
         stbi_image_free(src_img);
-        rtg.helpers.destroy_buffer(std::move(results));
         rtg.helpers.destroy_buffer(std::move(params_buffer));
         rtg.helpers.destroy_cubemap(std::move(environment));
-        for (uint32_t i = 0; i < 6; ++i) {
-            out_faces[i].destroy(rtg);
-        }
 
         if (environment_sampler) {
             vkDestroySampler(rtg.device, environment_sampler, nullptr);
             environment_sampler = VK_NULL_HANDLE;
-	    }
+        }
         vkDestroyImageView(rtg.device, environment_view, nullptr);
         environment_view = VK_NULL_HANDLE;
 
@@ -581,8 +602,6 @@ int main(int argc, char **argv) {
 
     } catch (std::exception &e) {
         std::cerr << "Exception: " << e.what() << std::endl;
-        return 1;
+        exit(1);
     }
-
-    return 0;
 }

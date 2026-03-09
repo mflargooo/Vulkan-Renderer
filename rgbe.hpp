@@ -18,6 +18,9 @@ inline glm::vec3 linear_from_rgbe(glm::u8vec4 color) {
 
 inline glm::u8vec4 rgbe_from_linear(glm::vec3 color) {
     // get largest e containing all r, g, b
+    if (!std::isfinite(color.r) || !std::isfinite(color.g) || !std::isfinite(color.b))
+            return glm::u8vec4(255, 0, 255, 255);
+
     float m = std::max(color.r, std::max(color.g, color.b));
 
     if (m <= 1e-32) {
@@ -26,17 +29,17 @@ inline glm::u8vec4 rgbe_from_linear(glm::vec3 color) {
 
     int e;
 
-    float s = 255.999f * (std::frexp(m, &e) / m);
+    float s = 255.999f * (std::frexpf(m, &e)) / m;
 
     if (e > 127) {
-        return glm::u8vec4(255);
+        return glm::u8vec4(255, 255, 255, 255);
     }
 
     return glm::u8vec4(
-        std::clamp(int32_t(color.r * s), 0, 255),
-        std::clamp(int32_t(color.g * s), 0, 255),
-        std::clamp(int32_t(color.b * s), 0, 255),
-        uint8_t(e + 128)
+        std::clamp(int64_t(color.r * s), 0LL, 255LL),
+        std::clamp(int64_t(color.g * s), 0LL, 255LL),
+        std::clamp(int64_t(color.b * s), 0LL, 255LL),
+        uint8_t(std::clamp(e + 128, 0, 255))
     );
 };
 

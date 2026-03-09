@@ -60,7 +60,8 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			exposure = (float)std::atof(argv[argi]);
 		} else if (arg == "--tonemap") {
 			argi += 1;
-			tonemap = std::string(argv[argi]).compare("linear") == 0 ? 0 : 1;
+			tonemap = std::string(argv[argi]).compare("green") == 0 ? 2 : (std::string(argv[argi]).compare("linear") == 0 ? 1 : 0);
+			std::cout << tonemap << std::endl;
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}

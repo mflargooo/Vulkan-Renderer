@@ -58,22 +58,25 @@ const lines_shaders = [
 ];
 main_objs.push( maek.CPP('LinesPipeline.cpp', undefined, { depends:[...lines_shaders] } ) );
 
+const tonemap_includes = ['tonemap.glsl'];
 //uncomment to build objects shaders and pipeline:
 const objects_shaders = [
 	maek.GLSLC('objects.vert'),
-	maek.GLSLC('objects.frag'),
+	maek.GLSLC('objects.frag', undefined, { depends:[...tonemap_includes] }),
 ];
 main_objs.push( maek.CPP('ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
+
 
 const main_exe = maek.LINK([...main_objs, ...common_objs], 'bin/viewer');
 
 // cube program
 const cube_objs = [
-	maek.CPP('internal/cube/cube-main.cpp')
+	maek.CPP('internal/cube/main.cpp'),
 ];
 
 const cube_shaders = [
-	maek.GLSLC('internal/cube/cube.comp')
+	maek.GLSLC('internal/cube/cube.comp'),
+	maek.GLSLC('internal/cube/lut.comp'),
 ];
 cube_objs.push( maek.CPP('internal/cube/CubePipeline.cpp', undefined, { depends:[...cube_shaders] } ) );
 

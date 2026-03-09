@@ -934,7 +934,7 @@ int Viewer::load_scene(const std::string &filename) {
 						height = width; // assume always vertical strip, for now
 						
 						// track index of texture
-						cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
+						cubemap_ids.insert({ path, (uint32_t)cubemaps.size() });
 						cubemaps.emplace_back(rtg.helpers.create_cubemap(
 							VkExtent2D{ .width = width, .height = height },
 							VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
@@ -1490,7 +1490,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				ObjectsPipeline::Constants constants = {
 					.material = inst->material,
 					.exposure = rtg.configuration.exposure,
-					.tonemap = rtg.configuration.tonemap.compare("linear") == 0 ? 0 : 1,
+					.tonemap = rtg.configuration.tonemap,
 					.has_normal_map = inst->normal_map >= 0 ? 1 : 0,
 				};
 

@@ -90,7 +90,7 @@ struct RTG {
 		float exposure = 0;
 
 		// tonemap
-		std::string tonemap = "linear";
+		int32_t tonemap = 0;
 
 		//for configuration construction + management:
 		Configuration() = default;

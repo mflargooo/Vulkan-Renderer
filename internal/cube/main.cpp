@@ -1,37 +1,30 @@
-#include "integration.hpp"
-#include <cstdint>
-
-#define STB_IMAGE_IMPLEMENTATION
-#include "../../external/stb/stb_image.h"
+#include <iostream>
+#include <chrono>
+#include "lambertian.hpp"
+#include "ggx.hpp"
+#include "lut.hpp"
 
 #define __STDC_LIB_EXT1__
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "../../external/stb/stb_image_write.h"
 
-int main (int argc, char **argv) {
+#define DEBUG true
+int main(int argc, char **argv) {
     if (argc < 4) {
-        printf("Usage: %s <infile> --lambertian <outfile>", argv[0]);
+        std::cout << "Usage " << argv[0] << "<infile.png> <--lambertian | --ggx> <outfile.png>" << std::endl;
+        return 0;
     }
 
-    const char *infile = argv[1];
-    // std::string material_type = argv[2];
-    const char *outfile = argv[3];
-
-    int x, y, c;
-    void *img = (void *)stbi_load(infile, &x, &y, &c, 4);
-    if (!img) {
-        std::cerr << "Failed to load " << infile << std::endl;
-        exit(1);
+    std::chrono::high_resolution_clock::time_point before = std::chrono::high_resolution_clock::now();
+    if (std::string(argv[2]).compare("--lambertian") == 0) {
+        lambertian(argv[1], argv[3]);
+    } else if (std::string(argv[2]).compare("--ggx") == 0) {
+        ggx(argv[1], argv[3]);
+    } else if (std::string(argv[1]).compare("--lut") == 0) {
+        lut(argv[2]);
+    } else {
+        std::cout << "Incorrect flag.\nUsage " << argv[0] << "<infile.png> <--lambertian | --ggx> <outfile.png>" << std::endl;
+        return 0;
     }
-
-    size_t ox, oy;
-    auto integrated = integrate_rgbe(img, (size_t)x, (size_t)y, &ox, &oy);
-    void const *lamb = integrated.data();
-
-    if (!stbi_write_png(outfile, (int)ox, (int)oy, c, lamb, (int)(ox * sizeof(uint32_t)))) {
-        std::cerr << "Failed to save to " << outfile << std::endl;
-        exit(1);
-    }
-
-    return 0;
+    std::chrono::high_resolution_clock::time_point after = std::chrono::high_resolution_clock::now();
+    if(DEBUG) std::cout << "[TIME] Execution time: " << std::chrono::duration<double>(after - before).count() << " seconds.";
 }

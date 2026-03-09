@@ -62,8 +62,10 @@ void main() {
         vec3 env_lighting = texture(CUBEMAP, r).rgb;
         base_color = env_lighting;
         
-    } else { // pc.type == 2 // ENVIRONMENT
+    } else if (pc.type == 2) { // ENVIRONMENT
         base_color = texture(CUBEMAP, n).rgb;
+    } else { // (pc.type == 3) // PBR
+        base_color = vec3(1.f);
     }
 
     vec3 radiance = min(base_color * exp2(pc.exposure), vec3(1e4)); // avoiding nans and infs
