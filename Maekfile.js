@@ -27,6 +27,7 @@ custom_flags_and_rules();
 const common_objs = [
 	maek.CPP('RTG.cpp'),
 	maek.CPP('Helpers.cpp'),
+	maek.CPP('external/stb/stb.cpp'),
 ];
 
 //maek.CPP(...) builds a c++ file:
@@ -70,15 +71,17 @@ main_objs.push( maek.CPP('ObjectsPipeline.cpp', undefined, { depends:[...objects
 const main_exe = maek.LINK([...main_objs, ...common_objs], 'bin/viewer');
 
 // cube program
+const ggx_includes = ['ggx.glsl'];
 const cube_objs = [
 	maek.CPP('internal/cube/main.cpp'),
 ];
 
 const cube_shaders = [
-	maek.GLSLC('internal/cube/cube.comp'),
-	maek.GLSLC('internal/cube/lut.comp'),
+	maek.GLSLC('internal/cube/cube.comp', undefined, { depends:[...ggx_includes] }),
+	maek.GLSLC('internal/cube/lut.comp', undefined, { depends:[...ggx_includes] }),
 ];
 cube_objs.push( maek.CPP('internal/cube/CubePipeline.cpp', undefined, { depends:[...cube_shaders] } ) );
+cube_objs.push( maek.CPP('internal/cube/LutPipeline.cpp', undefined, { depends:[...cube_shaders] } ) );
 
 const cube_exe = maek.LINK([...cube_objs, ...common_objs], 'bin/cube');
 

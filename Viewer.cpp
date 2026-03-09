@@ -29,7 +29,6 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
 #include "external/stb/stb_image.h"
 
 Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {

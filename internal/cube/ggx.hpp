@@ -434,6 +434,8 @@ void ggx(const char *infile, const char *outfile) {
             );
 
             for (size_t f = 0; f < 6; ++f) { // run pipeline
+                GPUFace &out_face = out_faces[f]; 
+                
                 VK( vkResetCommandBuffer(command_buffer, 0) );
 
                 { // begin rec
@@ -447,8 +449,36 @@ void ggx(const char *infile, const char *outfile) {
                 // use cube pipeline
                 vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
 
-                GPUFace &out_face = out_faces[f]; 
+                {
+                    VkImageMemoryBarrier barrier{
+                        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        .srcAccessMask = 0,
+                        .dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                        .newLayout = VK_IMAGE_LAYOUT_GENERAL, // for GPU -> CPU
+                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .image = out_face.image.handle,
+                        .subresourceRange{
+                            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                            .baseMipLevel = 0,
+                            .levelCount = 1,
+                            .baseArrayLayer = 0,
+                            .layerCount = 1,
+                        },
+                    };
 
+                    vkCmdPipelineBarrier(
+                        command_buffer,
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        0, // dependencyFlags
+                        0, nullptr, // mem barrier count, ptr
+                        0, nullptr, // buf mem barrier count, ptr
+                        1, &barrier // img mem barrier count, ptr
+                    );
+                }
+                
                 { // bind descriptor sets
                     std::array< VkDescriptorSet, 3 > descriptor_sets{
                         environment_descriptor,
