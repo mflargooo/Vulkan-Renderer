@@ -91,7 +91,7 @@ void lut(const char *outfile) {
 
         uint32_t lut_size = 512;
         Helpers::AllocatedImage image = rtg.helpers.create_image(
-            VkExtent2D{ .width = (uint32_t)lut_size, .height = (uint32_t)lut_size },
+            VkExtent2D{ .width = lut_size, .height = lut_size },
             VK_FORMAT_R16G16_SFLOAT,
             VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -310,7 +310,7 @@ void lut(const char *outfile) {
 
         VK( vkDeviceWaitIdle(rtg.device) );
 
-        std::ofstream file(outfile);
+        std::ofstream file(outfile, std::ios::binary);
         if (!file) {
             std::cerr << "Unable to save to " << outfile << std::endl;
             exit(1);
