@@ -62,7 +62,7 @@ struct Helpers {
 	AllocatedImage create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped);
 	void destroy_image(AllocatedImage &&allocated_image);
 	
-	AllocatedImage create_cubemap(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped, uint32_t mip_levels=0);
+	AllocatedImage create_cubemap(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map = Unmapped, uint32_t mip_levels=1);
 	void destroy_cubemap(AllocatedImage &&allocated_image);
 
 	//-----------------------

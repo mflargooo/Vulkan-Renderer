@@ -281,7 +281,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 
 	VkImageSubresourceRange whole_image{
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.baseMipLevel = 0,
+		.baseMipLevel = mip_level,
 		.levelCount = 1,
 		.baseArrayLayer = base_array_layer,
 		.layerCount = 1,

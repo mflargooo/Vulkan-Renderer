@@ -900,15 +900,16 @@ int Viewer::load_scene(const std::string &filename) {
 				height = width; // assume always vertical strip, for now
 
 				{
-					mip_levels = (uint32_t)std::floor(std::log2f((float)width) - std::log2f(32.f)) + 1;
+					uint32_t expected_mip_levels = (uint32_t)std::floor(std::log2f((float)width) - std::log2f(32.f)) + 1;
 					// material-dependent env maps
 					std::vector< std::string > mip_paths;
 					{ // mips paths
-						for (uint32_t m = 1; m < mip_levels; ++m) {
+						for (uint32_t m = 1; m < expected_mip_levels; ++m) {
 							std::string path = texture.path.substr(0, texture.path.size() - 3) + std::to_string(m) + ".png";
 							if (std::filesystem::exists(path)) mip_paths.emplace_back(path);
 						}
 					}
+					mip_levels = std::max((uint32_t)mip_paths.size(), 1U);
 
 					// track index of texture
 					cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
@@ -956,13 +957,10 @@ int Viewer::load_scene(const std::string &filename) {
 							pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
 						}
 						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
-						std::cout << x << std::endl;
 						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back(), m);
 						stbi_image_free(tex);
 						m += 1;
 					} while(m < mip_levels);
-
-					std::cout << "loaded mips" << std::endl;
 				}
 
 				{
@@ -1013,7 +1011,6 @@ int Viewer::load_scene(const std::string &filename) {
 						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
 						stbi_image_free(tex);
 					}
-					std::cout << "loaded lambertian" << std::endl;
 				}
 			}
 		}
