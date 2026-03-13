@@ -71,7 +71,7 @@ struct Viewer : RTG::Application {
 		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set2_Camera = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set3_TEXTURE = VK_NULL_HANDLE;
-		VkDescriptorSetLayout set4_CUBEMAPS = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set4_ENV_MAP = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set5_NORMAL_MAP = VK_NULL_HANDLE;
 
 		// types for descriptors
@@ -156,11 +156,11 @@ struct Viewer : RTG::Application {
 	std::vector< VkDescriptorSet > texture_descriptors; // allocated from texture_descriptor_pool
 
 	uint32_t mip_levels = 0; // leverages at most 1 cubemap exists
-	std::vector< Helpers::AllocatedImage > cubemaps;
-	std::vector< VkImageView > cubemap_views;
-	std::vector< VkSampler > cubemap_samplers;
-	VkDescriptorPool cubemap_descriptor_pool = VK_NULL_HANDLE;
-	std::vector< VkDescriptorSet > cubemap_descriptors; // allocated from cubemap_descriptor_pool
+	std::vector< Helpers::AllocatedImage > env_maps;
+	std::vector< VkImageView > env_map_views;
+	std::vector< VkSampler > env_map_samplers;
+	VkDescriptorPool env_map_descriptor_pool = VK_NULL_HANDLE;
+	VkDescriptorSet env_map_descriptor = VK_NULL_HANDLE; // allocated from cubemap_descriptor_pool
 
 	// normal maps are stored in textures map
 

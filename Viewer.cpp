@@ -294,7 +294,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	}
 
 	{ // make some textures
-		{ // tex 0 is dark / light grey checker with red origin
+		{ // tex 0 is dark / light grey checker with red origin - debug texture
 			uint32_t size = 128;
 			std::vector< uint32_t > data;
 			data.reserve(size * size);
@@ -324,32 +324,22 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
 		}
 
-		{ // tex 1 will be classic 'xor' tex
-			uint32_t size = 256;
-			std::vector< uint32_t > data;
-			data.reserve(size * size);
-			for (uint32_t y = 0; y < size; ++y) {
-				for (uint32_t x = 0; x < size; ++x) {
-					uint8_t r = uint8_t(x) ^ uint8_t(y);
-					uint8_t g = uint8_t(x + 128) ^ uint8_t(y);
-					uint8_t b = uint8_t(x) ^ uint8_t(y + 27);
-					uint8_t a = 0xff;
-					data.emplace_back( uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24) );
-				}
-			}
-			assert(data.size() == size * size);
+		{ // tex 1 will be LUT texture at known location
+			std::string lut_path = "bin/.lut"; // sibling of viewer.exe
+			uint32_t size = 512;
+			std::vector< char > data;
+			DataStream::load(lut_path, data);
 
 			// make a place for the tex to live on GPU
 			textures.emplace_back(rtg.helpers.create_image(
 				VkExtent2D{ .width = size, .height = size }, // size of img
-				VK_FORMAT_R8G8B8A8_SRGB, // how to interpret image data
+				VK_FORMAT_R16G16_SFLOAT, // how to interpret image data
 				VK_IMAGE_TILING_OPTIMAL,
 				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
 				Helpers::Unmapped
 			));
-
-			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+			rtg.helpers.transfer_to_image(data.data(), data.size(), textures.back());
 		}
 	}
 	
@@ -468,22 +458,21 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	}
 
 	// cubemap initialization
-	// cubemaps vector is ordered such that the ith entry is the ith mip
+	// env_maps vector is ordered such that the ith entry is the ith mip
 	// the lambertian prefiltered.
 
 	// make cubemap views 0 - lambertian, 1 - mirror, 2 - env, 3 - pbr
-	{ // make image views for the cubemaps
-		cubemap_views.reserve(4);
+	{ // make image views for the env_maps
+		env_map_views.reserve(4);
 		// lambertian
 
 		struct CubemapView {
 			Helpers::AllocatedImage *image = nullptr;
 			uint32_t level_count = 1;
-		} cubemap_view_infos[4] = { 
-			{ .image = &cubemaps.back(), .level_count = 1 }, // lambertian
-			{ .image = &cubemaps[0], .level_count = 1 }, // mirror
-			{ .image = &cubemaps[0], .level_count = 1 }, // env
-			{ .image = &cubemaps[0], .level_count = (uint32_t)cubemaps.size() - 1 }, // pbr
+		} cubemap_view_infos[3] = { 
+			{ .image = &env_maps.back(), .level_count = 1 }, // lambertian
+			{ .image = &env_maps[0], .level_count = 1 }, // mirror / env
+			{ .image = &env_maps[0], .level_count = (uint32_t)env_maps.size() - 1 }, // pbr
 		};
 
 		for (CubemapView &info : cubemap_view_infos) {
@@ -506,18 +495,18 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			VkImageView image_view = VK_NULL_HANDLE;
 			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
 
-			cubemap_views.emplace_back(image_view);
+			env_map_views.emplace_back(image_view);
 		}
 	}
 
-	for (uint32_t level_count : std::array< uint32_t, 2 >{ 0, mip_levels - 1 }) { // make a sampler for the cubemaps
-		cubemap_samplers.emplace_back(VK_NULL_HANDLE);
+	for (uint32_t level_count : std::array< uint32_t, 2 >{ 0, mip_levels - 1 }) { // make a sampler for the env_maps
+		env_map_samplers.emplace_back(VK_NULL_HANDLE);
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 			.flags = 0,
 			.magFilter = VK_FILTER_LINEAR,
 			.minFilter = VK_FILTER_LINEAR,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
 			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
@@ -531,11 +520,11 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
 			.unnormalizedCoordinates = VK_FALSE,
 		};
-		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &cubemap_samplers.back()) );
+		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &env_map_samplers.back()) );
 	}
 
 	{ // create the cubemap descriptor pool
-		uint32_t per_cubemap_view = uint32_t(cubemap_views.size()); // for easier to read counting
+		uint32_t per_cubemap_view = uint32_t(env_map_views.size()); // for easier to read counting
 
 		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
 			VkDescriptorPoolSize{
@@ -552,38 +541,36 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			.pPoolSizes = pool_sizes.data(),
 		};
 
-		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &cubemap_descriptor_pool) );
+		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &env_map_descriptor_pool) );
 	}
 
 	{ // allocate and write the cubemap descriptor sets
 		// allocate the descriptors (using same alloc_info)
 		VkDescriptorSetAllocateInfo alloc_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = cubemap_descriptor_pool,
+			.descriptorPool = env_map_descriptor_pool,
 			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set4_CUBEMAPS,
+			.pSetLayouts = &objects_pipeline.set4_ENV_MAP,
 		};
-		cubemap_descriptors.assign(cubemap_views.size(), VK_NULL_HANDLE);
-		for (VkDescriptorSet &descriptor_set : cubemap_descriptors) {
-			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set) );
-		}
+		env_map_descriptor = VK_NULL_HANDLE;
+		VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &env_map_descriptor) );
 
-		// write descriptor for cubemaps
-		std::vector< VkDescriptorImageInfo > infos(cubemap_views.size());
-		std::vector< VkWriteDescriptorSet > writes(cubemap_views.size());
+		// write descriptor for env_maps
+		std::vector< VkDescriptorImageInfo > infos(env_map_views.size());
+		std::vector< VkWriteDescriptorSet > writes(env_map_views.size());
 
-		for (auto const &cubemap_view : cubemap_views) {
-			size_t i = &cubemap_view - &cubemap_views[0];
+		for (auto const &cubemap_view : env_map_views) {
+			size_t i = &cubemap_view - &env_map_views[0];
 
 			infos[i] = VkDescriptorImageInfo{
-				.sampler = cubemap_samplers[i < 3 ? 0 : 1], // all but last (pbr) uses level_count 1 sampler
+				.sampler = env_map_samplers[i < 3 ? 0 : 1], // all but last (pbr) uses level_count 1 sampler
 				.imageView = cubemap_view,
 				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			};
 			writes[i] = VkWriteDescriptorSet{
 				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = cubemap_descriptors[i],
-				.dstBinding = 0,
+				.dstSet = env_map_descriptor,
+				.dstBinding = (uint32_t)i,
 				.dstArrayElement = 0,
 				.descriptorCount = 1,
 				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -602,31 +589,28 @@ Viewer::~Viewer() {
 		std::cerr << "Failed to vkDeviceWaitIdle in Viewer::~Viewer [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
 
-	if (cubemap_descriptor_pool) {
-		vkDestroyDescriptorPool(rtg.device, cubemap_descriptor_pool, nullptr);
-		cubemap_descriptor_pool = nullptr;
-		
-		// this also frees descriptor sets allocated from pool
-		cubemap_descriptors.clear();
+	if (env_map_descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, env_map_descriptor_pool, nullptr);
+		env_map_descriptor_pool = nullptr;
 	}
 
-	if (!cubemap_samplers.empty()) {
-		for (uint32_t i = 0; i < cubemap_samplers.size(); ++i) {
-			vkDestroySampler(rtg.device, cubemap_samplers[i], nullptr);
-			cubemap_samplers[i] = VK_NULL_HANDLE;
+	if (!env_map_samplers.empty()) {
+		for (uint32_t i = 0; i < env_map_samplers.size(); ++i) {
+			vkDestroySampler(rtg.device, env_map_samplers[i], nullptr);
+			env_map_samplers[i] = VK_NULL_HANDLE;
 		}
 	}
 
-	for (VkImageView &view : cubemap_views) {
+	for (VkImageView &view : env_map_views) {
 		vkDestroyImageView(rtg.device, view, nullptr);
 		view = VK_NULL_HANDLE;
 	}
-	cubemap_views.clear();
+	env_map_views.clear();
 
-	for (auto &cubemap : cubemaps) {
-		rtg.helpers.destroy_cubemap(std::move(cubemap));
+	for (auto &env_map : env_maps) {
+		rtg.helpers.destroy_cubemap(std::move(env_map));
 	}
-	cubemaps.clear();
+	env_maps.clear();
 
 	if (texture_descriptor_pool) {
 		vkDestroyDescriptorPool(rtg.device, texture_descriptor_pool, nullptr);
@@ -812,7 +796,7 @@ int Viewer::load_scene(const std::string &filename) {
 			}
 
 			std::vector< char > vertices; 
-			VertexStream::load(df.path, vertices); // vertex data
+			DataStream::load(df.path, vertices); // vertex data
 
 			// allocate new buffer
 			Helpers::AllocatedBuffer buffer;
@@ -840,7 +824,7 @@ int Viewer::load_scene(const std::string &filename) {
 			auto const &stride = mesh.attributes.at("POSITION").stride;
 			auto const &offset = mesh.attributes.at("POSITION").offset;
 			std::vector< char > data;
-			char *vertices = VertexStream::load(path, data).data(); // vertex data
+			char *vertices = DataStream::load(path, data).data(); // vertex data
 			auto &buffer = scene_vertices[path];
 			AABB aabb = AABB{
 				.min = glm::vec3(FLT_MAX),
@@ -912,8 +896,8 @@ int Viewer::load_scene(const std::string &filename) {
 					mip_levels = std::max((uint32_t)mip_paths.size(), 1U);
 
 					// track index of texture
-					cubemap_ids.insert({ texture.path, (uint32_t)cubemaps.size() });
-					cubemaps.emplace_back(rtg.helpers.create_cubemap(
+					cubemap_ids.insert({ texture.path, (uint32_t)env_maps.size() });
+					env_maps.emplace_back(rtg.helpers.create_cubemap(
 						VkExtent2D{ .width = width, .height = height },
 						VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
 						VK_IMAGE_TILING_OPTIMAL,
@@ -957,7 +941,7 @@ int Viewer::load_scene(const std::string &filename) {
 							pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
 						}
 						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
-						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back(), m);
+						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, env_maps.back(), m);
 						stbi_image_free(tex);
 						m += 1;
 					} while(m < mip_levels);
@@ -974,8 +958,8 @@ int Viewer::load_scene(const std::string &filename) {
 						height = width; // assume always vertical strip, for now
 						
 						// track index of texture
-						cubemap_ids.insert({ path, (uint32_t)cubemaps.size() });
-						cubemaps.emplace_back(rtg.helpers.create_cubemap(
+						cubemap_ids.insert({ path, (uint32_t)env_maps.size() });
+						env_maps.emplace_back(rtg.helpers.create_cubemap(
 							VkExtent2D{ .width = width, .height = height },
 							VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
 							VK_IMAGE_TILING_OPTIMAL,
@@ -1008,7 +992,7 @@ int Viewer::load_scene(const std::string &filename) {
 							pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
 						}
 						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
-						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, cubemaps.back());
+						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, env_maps.back());
 						stbi_image_free(tex);
 					}
 				}
@@ -1016,7 +1000,7 @@ int Viewer::load_scene(const std::string &filename) {
 		}
 	}
 
-	std::cout << "Loaded " << textures.size() << " textures and " << cubemaps.size() << " cubemaps!" << std::endl;
+	std::cout << "Loaded " << textures.size() << " textures and " << env_maps.size() << " env_maps!" << std::endl;
 
 	{ // load materials
 		for (auto &[key, material] : s72.materials) {
@@ -1512,7 +1496,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
 					4, // second set
-					1, &cubemap_descriptors[inst->material], // descriptor sets count, ptr
+					1, &env_map_descriptor, // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 
