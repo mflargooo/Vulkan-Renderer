@@ -69,7 +69,7 @@ void main() {
     } else if (pc.type == 2) { // ENVIRONMENT
         base_color = textureLod(PREFILTER_ENV, n, 0.0).rgb;
     } else { // (pc.type == 3) // PBR
-        base_color = vec3(1.f);
+        base_color = vec3(texture(BRDF_LUT, texCoord).rg, 0.0);
     }
 
     vec3 radiance = min(base_color * exp2(pc.exposure), vec3(1e4)); // avoiding nans and infs

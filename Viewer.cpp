@@ -466,21 +466,22 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		env_map_views.reserve(4);
 		// lambertian
 
-		struct CubemapView {
+		struct EnvMapView {
+			VkImageViewType type;
 			Helpers::AllocatedImage *image = nullptr;
 			uint32_t level_count = 1;
-		} cubemap_view_infos[3] = { 
-			{ .image = &env_maps.back(), .level_count = 1 }, // lambertian
-			{ .image = &env_maps[0], .level_count = 1 }, // mirror / env
-			{ .image = &env_maps[0], .level_count = (uint32_t)env_maps.size() - 1 }, // pbr
+		} view_infos[3] = { 
+			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
+			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = mip_levels }, // pbr
+			{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
 		};
 
-		for (CubemapView &info : cubemap_view_infos) {
+		for (EnvMapView &info : view_infos) {
 			VkImageViewCreateInfo create_info{
 				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 				.flags = 0,
 				.image = info.image->handle,
-				.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+				.viewType = info.type,
 				.format = info.image->format,
 				// .components sets swizzling and is fine when zero inited
 				.subresourceRange{
@@ -488,7 +489,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 					.baseMipLevel = 0,
 					.levelCount = info.level_count,
 					.baseArrayLayer = 0,
-					.layerCount = 6,
+					.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
 				},
 			};
 
