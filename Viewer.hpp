@@ -155,9 +155,10 @@ struct Viewer : RTG::Application {
 	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;
 	std::vector< VkDescriptorSet > texture_descriptors; // allocated from texture_descriptor_pool
 
+	uint32_t mip_levels = 0; // leverages at most 1 cubemap exists
 	std::vector< Helpers::AllocatedImage > cubemaps;
 	std::vector< VkImageView > cubemap_views;
-	VkSampler cubemap_sampler = VK_NULL_HANDLE;
+	std::vector< VkSampler > cubemap_samplers;
 	VkDescriptorPool cubemap_descriptor_pool = VK_NULL_HANDLE;
 	std::vector< VkDescriptorSet > cubemap_descriptors; // allocated from cubemap_descriptor_pool
 
@@ -234,7 +235,7 @@ struct Viewer : RTG::Application {
 		ObjectsPipeline::Transform transform;
 		int32_t texture = -1;
 		int32_t normal_map = -1;
-		uint32_t material = 0; // 0 - lambert, 1 - mirror
+		uint32_t material = 0; // 0 - lambert, 1 - mirror, 2 - env, 3 - pbr
 	};
 	std::vector< ObjectInstance > object_instances;
 

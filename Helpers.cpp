@@ -157,7 +157,7 @@ void Helpers::destroy_image(AllocatedImage &&image) {
 	this->free(std::move(image.allocation));
 }
 
-Helpers::AllocatedImage Helpers::create_cubemap(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map) {
+Helpers::AllocatedImage Helpers::create_cubemap(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map, uint32_t mip_levels) {
 	AllocatedImage image;
 	image.extent = extent;
 	image.format = format;
@@ -172,7 +172,7 @@ Helpers::AllocatedImage Helpers::create_cubemap(VkExtent2D const &extent, VkForm
 			.height = extent.height,
 			.depth = 1
 		},
-		.mipLevels = 1,
+		.mipLevels = mip_levels,
 		.arrayLayers = 6,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = tiling,
@@ -250,13 +250,13 @@ void Helpers::transfer_to_buffer(void const *data, size_t size, AllocatedBuffer 
 	destroy_buffer(std::move(transfer_src));
 }
 
-void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target, uint32_t base_array_layer) {
+void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target, uint32_t base_array_layer, uint32_t mip_level) {
 	assert(target.handle != VK_NULL_HANDLE); // target img should be alloced alr
 	
 	// check data is right size
 	size_t bytes_per_block = vkuFormatTexelBlockSize(target.format);
 	size_t texels_per_block = vkuFormatTexelsPerBlock(target.format);
-	assert(size == target.extent.width * target.extent.height * bytes_per_block / texels_per_block);
+	assert(size == (target.extent.width >> mip_level) * (target.extent.height >> mip_level) * bytes_per_block / texels_per_block);
 
 	// create host-coherent source buf
 	AllocatedBuffer transfer_src = create_buffer(
@@ -314,18 +314,18 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 	{ // copy source buf to image
 		VkBufferImageCopy region{
 			.bufferOffset = 0,
-			.bufferRowLength = target.extent.width,
-			.bufferImageHeight = target.extent.height,
+			.bufferRowLength = target.extent.width >> mip_level,
+			.bufferImageHeight = target.extent.height >> mip_level,
 			.imageSubresource{
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-				.mipLevel = 0,
+				.mipLevel = mip_level,
 				.baseArrayLayer = base_array_layer,
 				.layerCount = 1,
 			},
 			.imageOffset{ .x = 0, .y = 0, .z = 0 },
 			.imageExtent{
-				.width = target.extent.width,
-				.height = target.extent.height,
+				.width = target.extent.width >> mip_level,
+				.height = target.extent.height >> mip_level,
 				.depth = 1,
 			},
 		};
@@ -517,7 +517,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 }
 
 // assume vertical strip
-void Helpers::transfer_to_cubemap(void const *data, size_t size, AllocatedImage &target) {
+void Helpers::transfer_to_cubemap(void const *data, size_t size, AllocatedImage &target, uint32_t mip_level) {
 	uint32_t block_size = (uint32_t)size / 6;
 	assert(block_size * 6 == size && "All 6 faces must have the same amount of data!");
 	
@@ -526,7 +526,8 @@ void Helpers::transfer_to_cubemap(void const *data, size_t size, AllocatedImage 
 			static_cast<void const *>(static_cast<char const *>(data) + block_size * i), 
 			block_size, 
 			target, 
-			i
+			i,
+			mip_level
 		);
 	}
 }
