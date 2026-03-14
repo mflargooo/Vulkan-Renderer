@@ -500,7 +500,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
-	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels - 1, 0 }) { // make a sampler for the env_maps
+	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels, 0 }) { // make a sampler for the env_maps
 		env_map_samplers.emplace_back(VK_NULL_HANDLE);
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
