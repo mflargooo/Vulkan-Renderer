@@ -895,7 +895,6 @@ int Viewer::load_scene(const std::string &filename) {
 						}
 					}
 					mip_levels = std::max((uint32_t)mip_paths.size(), 1U);
-
 					// track index of texture
 					cubemap_ids.insert({ texture.path, (uint32_t)env_maps.size() });
 					env_maps.emplace_back(rtg.helpers.create_cubemap(
@@ -1019,7 +1018,7 @@ int Viewer::load_scene(const std::string &filename) {
 				if (auto p_albedo = std::get_if<glm::vec3>(&lamb.albedo)) {
 					glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
 					// simple monocolor texture
-					uint32_t size = 128;
+					uint32_t size = 32;
 					std::vector< glm::u8vec4 > data(size * size, albedo);
 					assert(data.size() == size * size);
 
@@ -1050,7 +1049,7 @@ int Viewer::load_scene(const std::string &filename) {
 				if (auto p_albedo = std::get_if<glm::vec3>(&p_pbr->albedo)) {
 					glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
 					// simple monocolor texture
-					uint32_t size = 128;
+					uint32_t size = 32;
 					std::vector< glm::u8vec4 > data(size * size, albedo);
 					assert(data.size() == size * size);
 

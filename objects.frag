@@ -60,8 +60,8 @@ void main() {
             + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
 
         vec3 env_lighting = texture(IRRADIANCE, n).rgb;
-        base_color = albedo * (e + env_lighting) / 3.1415926;
-    } else if (pc.type == 1) { 
+        base_color = albedo * (e + env_lighting);
+    } else if (pc.type == 1) { // MIRROR
         mat4 WORLD_FROM_CLIP = inverse(CLIP_FROM_WORLD);
         vec4 eye = WORLD_FROM_CLIP * vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -80,7 +80,7 @@ void main() {
         vec3 to_eye = normalize(eye.xyz / eye.w - position);
 
         vec3 r = reflect(-to_eye, n);
-        float NoV = clamp(dot(-to_eye, n), 0.0, 1.0);
+        float NoV = clamp(dot(to_eye, n), 0.0, 1.0);
 
         vec3 albedo = texture(TEXTURE, texCoord).rgb;
 
@@ -91,7 +91,7 @@ void main() {
         float metalness = 0.f;
         if (pc.has_metalness_map != 0) metalness = texture(METALNESS, texCoord).r;
 
-        vec3 prefilter_col = textureLod(PREFILTER_ENV, r, roughness * roughness * (pc.mip_levels - 1.0)).rgb;
+        vec3 prefilter_col = textureLod(PREFILTER_ENV, r, roughness * pc.mip_levels).rgb;
         vec2 brdf_val = texture(BRDF_LUT, vec2(roughness, NoV)).rg;
 
         // referenced from s72-viewer
@@ -100,10 +100,10 @@ void main() {
         vec3 specular_color = prefilter_col * (specular_tint * brdf_val.x + brdf_val.y);
         vec3 irradiance = texture(IRRADIANCE, n).rgb;
 
-        float Fc = pow(1.0 - NoV, 5.0);
-        vec3 diff_factor = specular_tint + (1.0 - specular_tint) * Fc;
-        vec3 diff_albedo = mix(albedo, vec3(0.0), metalness) * irradiance / 3.14159265359;
-        diff_albedo *= diff_factor;
+        float OneMinusNoV = 1.0 - NoV;
+        float Fc = OneMinusNoV * OneMinusNoV * OneMinusNoV * OneMinusNoV * OneMinusNoV;
+        vec3 F = specular_tint + (1.0 - specular_tint) * Fc;
+        vec3 diff_albedo = mix(albedo, vec3(0.0), metalness) * irradiance;
         base_color = specular_color + diff_albedo;
     }
 
