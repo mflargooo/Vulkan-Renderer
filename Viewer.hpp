@@ -73,6 +73,8 @@ struct Viewer : RTG::Application {
 		VkDescriptorSetLayout set3_TEXTURE = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set4_ENV_MAP = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set5_NORMAL_MAP = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set6_ROUGHNESS_MAP = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set7_METALNESS_MAP = VK_NULL_HANDLE;
 
 		// types for descriptors
 		struct World {
@@ -91,10 +93,13 @@ struct Viewer : RTG::Application {
 		static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4, "Transform is the expected size.");
 
 		struct Constants {
-			uint32_t material;
+			uint32_t material_type;
 			float exposure;
 			int32_t tonemap;
-			int has_normal_map;
+			int32_t has_normal_map;
+			float roughness;
+			float metalness;
+			uint32_t mip_levels;
 		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -229,13 +234,21 @@ struct Viewer : RTG::Application {
 	};
 	std::unordered_map< Helpers::AllocatedBuffer *, AABB > aabbs;
 
+	struct Material {
+		uint32_t type = 0;
+		int32_t albedo_id = -1; // may not exists
+		int32_t normal_id = -1; // may not exist
+		int32_t displacement_id = -1; // may not exist
+		float roughness = 0.f;
+		float metalness = 0.f;
+	};
+	std::unordered_map< std::string, Material > materials;
+
 	struct ObjectInstance {
 		ObjectVertices vertices;
 		Helpers::AllocatedBuffer *buffer = nullptr;
 		ObjectsPipeline::Transform transform;
-		int32_t texture = -1;
-		int32_t normal_map = -1;
-		uint32_t material = 0; // 0 - lambert, 1 - mirror, 2 - env, 3 - pbr
+		Material material;
 	};
 	std::vector< ObjectInstance > object_instances;
 
@@ -247,14 +260,6 @@ struct Viewer : RTG::Application {
 	// texture path -> *_view id
 	std::unordered_map< std::string, uint32_t > tex_ids;
 	std::unordered_map< std::string, uint32_t > cubemap_ids;
-	
-	struct Material {
-		uint32_t type;
-		int albedo_id = -1; // may not exists
-		int normal_id = -1; // may not exist
-		int displacement_id = -1; // may not exist
-	};
-	std::unordered_map< std::string, Material > materials;
 
 	int load_scene(const std::string &file);
 	void parse_scene_graph();

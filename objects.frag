@@ -18,6 +18,8 @@ layout(push_constant) uniform Constants {
     float exposure;
     int tonemap;
     int has_normal_map;
+    float roughness;
+    uint mip_levels;
 } pc;
 
 layout(set=3, binding=0) uniform sampler2D TEXTURE;
@@ -69,7 +71,19 @@ void main() {
     } else if (pc.type == 2) { // ENVIRONMENT
         base_color = textureLod(PREFILTER_ENV, n, 0.0).rgb;
     } else { // (pc.type == 3) // PBR
-        base_color = vec3(texture(BRDF_LUT, texCoord).rg, 0.0);
+        mat4 WORLD_FROM_CLIP = inverse(CLIP_FROM_WORLD);
+        vec4 eye = WORLD_FROM_CLIP * vec4(0.0, 0.0, 0.0, 1.0);
+
+        vec3 to_eye = normalize(eye.xyz / eye.w - position);
+
+        vec3 r = reflect(-to_eye, n);
+        float NoV = clamp(dot(-to_eye, n), 0.0, 1.0);
+
+        vec3 prefilter_col = textureLod(PREFILTER_ENV, r, pc.roughness * pc.roughness * (pc.mip_levels - 1.0)).rgb;
+        vec2 brdf_val = texture(BRDF_LUT, vec2(sqrt(pc.roughness), NoV)).rg;
+
+        vec3 albedo = texture(TEXTURE, texCoord).rgb;
+        base_color = prefilter_col * (albedo * brdf_val.y + brdf_val.x);
     }
 
     vec3 radiance = min(base_color * exp2(pc.exposure), vec3(1e4)); // avoiding nans and infs
