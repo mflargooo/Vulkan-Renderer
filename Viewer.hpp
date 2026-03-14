@@ -97,8 +97,8 @@ struct Viewer : RTG::Application {
 			float exposure;
 			int32_t tonemap;
 			int32_t has_normal_map;
-			float roughness;
-			float metalness;
+			int32_t has_roughness_map;
+			int32_t has_metalness_map;
 			uint32_t mip_levels;
 		};
 
@@ -239,8 +239,8 @@ struct Viewer : RTG::Application {
 		int32_t albedo_id = -1; // may not exists
 		int32_t normal_id = -1; // may not exist
 		int32_t displacement_id = -1; // may not exist
-		float roughness = 0.f;
-		float metalness = 0.f;
+		int32_t roughness_id = -1; // may not exist
+		int32_t metalness_id = -1; // may not exist
 	};
 	std::unordered_map< std::string, Material > materials;
 

@@ -329,7 +329,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			uint32_t size = 512;
 			std::vector< char > data;
 			DataStream::load(lut_path, data);
-
+			assert(data.size() == size * size * sizeof(uint32_t));
 			// make a place for the tex to live on GPU
 			textures.emplace_back(rtg.helpers.create_image(
 				VkExtent2D{ .width = size, .height = size }, // size of img
@@ -463,7 +463,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 	// make cubemap views 0 - lambertian, 1 - mirror, 2 - env, 3 - pbr
 	{ // make image views for the env_maps
-		env_map_views.reserve(4);
+		env_map_views.reserve(3);
 		// lambertian
 
 		struct EnvMapView {
@@ -500,7 +500,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
-	for (uint32_t level_count : std::array< uint32_t, 2 >{ 0, mip_levels - 1 }) { // make a sampler for the env_maps
+	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels - 1, 0 }) { // make a sampler for the env_maps
 		env_map_samplers.emplace_back(VK_NULL_HANDLE);
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -564,7 +564,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			size_t i = &cubemap_view - &env_map_views[0];
 
 			infos[i] = VkDescriptorImageInfo{
-				.sampler = env_map_samplers[i < 3 ? 0 : 1], // all but last (pbr) uses level_count 1 sampler
+				.sampler = env_map_samplers[i],
 				.imageView = cubemap_view,
 				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			};
@@ -1010,6 +1010,8 @@ int Viewer::load_scene(const std::string &filename) {
 			int32_t albedo_id = -1;
 			int32_t normal_id = material.normal_map ? (int32_t)tex_ids[material.normal_map->path] : -1;
 			int32_t displacement_id = material.displacement_map ? (int32_t)tex_ids[material.displacement_map->path] : -1;
+			int32_t roughness_id = -1;
+			int32_t metalness_id = -1;
 
 			if (auto p_lamb = std::get_if<S72::Material::Lambertian>(&material.brdf)) {
 				S72::Material::Lambertian lamb = *p_lamb;
@@ -1038,15 +1040,12 @@ int Viewer::load_scene(const std::string &filename) {
 					albedo_id = (int32_t)tex_ids[(*p_texture)->path];
 				}
 
-				materials.insert({ material.name, Material{ .type = 0, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id, .roughness = 1.f, .metalness = 0.f } });
+				materials.insert({ material.name, Material{ .type = 0, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 } });
 			} else if (auto p_mirror = std::get_if<S72::Material::Mirror>(&material.brdf)) {
-				materials.insert({ material.name, Material{ .type = 1, .normal_id = normal_id, .displacement_id = displacement_id, .roughness = 0.f, .metalness = 0.f }});
+				materials.insert({ material.name, Material{ .type = 1, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 }});
 			} else if (auto p_env = std::get_if<S72::Material::Environment>(&material.brdf)) {
-				materials.insert({ material.name, Material{ .type = 2, .normal_id = normal_id, .displacement_id = displacement_id, .roughness = 0.f, .metalness = 0.f }});
+				materials.insert({ material.name, Material{ .type = 2, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 }});
 			} else if (auto p_pbr = std::get_if<S72::Material::PBR>(&material.brdf)) {
-				float *p_roughness = std::get_if<float>(&p_pbr->roughness);
-				float *p_metalness = std::get_if<float>(&p_pbr->metalness);
-				
 				// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
 				if (auto p_albedo = std::get_if<glm::vec3>(&p_pbr->albedo)) {
 					glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
@@ -1071,8 +1070,54 @@ int Viewer::load_scene(const std::string &filename) {
 				} else if (auto p_texture = std::get_if<S72::Texture *>(&p_pbr->albedo)) {
 					albedo_id = (int32_t)tex_ids[(*p_texture)->path];
 				}
+
+				if (auto p_roughness = std::get_if< float >(&p_pbr->roughness)) {
+					// simple monocolor texture
+					uint32_t size = 32;
+					std::vector< float > data(size * size, *p_roughness);
+					assert(data.size() == size * size);
+
+					roughness_id = (int)textures.size();
+					// make place for tex to live on GPU
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = size, .height = size }, // size of img
+						VK_FORMAT_R32_SFLOAT, // how to interpret image data
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+						Helpers::Unmapped
+					));
+
+					// transfer data
+					rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+				} else if (auto p_roughness_map = std::get_if<S72::Texture *>(&p_pbr->roughness)) {
+					roughness_id = (int32_t)tex_ids[(*p_roughness_map)->path];
+				}
+
+				if (auto p_metalness = std::get_if< float >(&p_pbr->metalness)) {
+					// simple monocolor texture
+					uint32_t size = 32;
+					std::vector< float > data(size * size, *p_metalness);
+					assert(data.size() == size * size);
+
+					metalness_id = (int)textures.size();
+					// make place for tex to live on GPU
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = size, .height = size }, // size of img
+						VK_FORMAT_R32_SFLOAT, // how to interpret image data
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+						Helpers::Unmapped
+					));
+
+					// transfer data
+					rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+				} else if (auto p_metalness_map = std::get_if<S72::Texture *>(&p_pbr->metalness)) {
+					metalness_id = (int32_t)tex_ids[(*p_metalness_map)->path];
+				}
 				
-				materials.insert({ material.name, Material{ .type = 3, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id, .roughness = p_roughness ? *p_roughness : 0.0f, .metalness = p_metalness ? *p_metalness : 0.f }});
+				materials.insert({ material.name, Material{ .type = 3, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = roughness_id, .metalness_id = metalness_id }});
 			}
 		}
 	}
@@ -1538,13 +1583,33 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					0, nullptr // dynamic offsets count, ptr
 				);
 
+				// bind roughness_map descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					6, // sixth set
+					1, &texture_descriptors[inst->material.roughness_id>= 0 ? inst->material.roughness_id: 0], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
+				// bind metalness_map descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					7, // seventh set
+					1, &texture_descriptors[inst->material.metalness_id >= 0 ? inst->material.metalness_id: 0], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
 				ObjectsPipeline::Constants constants = {
 					.material_type = inst->material.type,
 					.exposure = rtg.configuration.exposure,
 					.tonemap = rtg.configuration.tonemap,
 					.has_normal_map = inst->material.normal_id >= 0 ? 1U : 0U,
-					.roughness = inst->material.roughness,
-					.metalness = inst->material.metalness,
+					.has_roughness_map = inst->material.roughness_id >= 0 ? 1U : 0U,
+					.has_metalness_map = inst->material.metalness_id >= 0 ? 1U : 0U,
 					.mip_levels = mip_levels,
 				};
 

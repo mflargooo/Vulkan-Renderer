@@ -142,6 +142,44 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set5_NORMAL_MAP) );
     }
 
+    { // the set6_ROUGHNESS_MAP layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set6_ROUGHNESS_MAP) );
+    }
+
+    { // the set7_METALNESS_MAP layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set7_METALNESS_MAP) );
+    }
+
     { // create pipeline layout
         VkPushConstantRange range{
             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -149,13 +187,15 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             .size = sizeof(Constants),
         };
 
-        std::array< VkDescriptorSetLayout, 6 > layouts{
+        std::array< VkDescriptorSetLayout, 8 > layouts{
             set0_World,
             set1_Transforms,
             set2_Camera,
             set3_TEXTURE,
             set4_ENV_MAP,
             set5_NORMAL_MAP,
+            set6_ROUGHNESS_MAP,
+            set7_METALNESS_MAP,
         };
 
         VkPipelineLayoutCreateInfo create_info{
@@ -284,6 +324,16 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
 }
 
 void Viewer::ObjectsPipeline::destroy(RTG &rtg) {
+    if (set7_METALNESS_MAP != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set7_METALNESS_MAP, nullptr);
+        set7_METALNESS_MAP = VK_NULL_HANDLE;
+    }
+
+    if (set6_ROUGHNESS_MAP != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set6_ROUGHNESS_MAP, nullptr);
+        set6_ROUGHNESS_MAP = VK_NULL_HANDLE;
+    }
+
     if (set5_NORMAL_MAP != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(rtg.device, set5_NORMAL_MAP, nullptr);
         set5_NORMAL_MAP = VK_NULL_HANDLE;

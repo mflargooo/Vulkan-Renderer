@@ -18,7 +18,8 @@ layout(push_constant) uniform Constants {
     float exposure;
     int tonemap;
     int has_normal_map;
-    float roughness;
+    int has_roughness_map;
+    int has_metalness_map;
     uint mip_levels;
 } pc;
 
@@ -29,6 +30,8 @@ layout(set=4, binding=1) uniform samplerCube PREFILTER_ENV;
 layout(set=4, binding=2) uniform sampler2D BRDF_LUT;
 
 layout(set=5, binding=0) uniform sampler2D NORMAL;
+layout(set=6, binding=0) uniform sampler2D ROUGHNESS;
+layout(set=7, binding=0) uniform sampler2D METALNESS;
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
@@ -79,11 +82,29 @@ void main() {
         vec3 r = reflect(-to_eye, n);
         float NoV = clamp(dot(-to_eye, n), 0.0, 1.0);
 
-        vec3 prefilter_col = textureLod(PREFILTER_ENV, r, pc.roughness * pc.roughness * (pc.mip_levels - 1.0)).rgb;
-        vec2 brdf_val = texture(BRDF_LUT, vec2(sqrt(pc.roughness), NoV)).rg;
-
         vec3 albedo = texture(TEXTURE, texCoord).rgb;
-        base_color = prefilter_col * (albedo * brdf_val.y + brdf_val.x);
+
+        float roughness = .5f;
+        if (pc.has_roughness_map != 0) roughness = texture(ROUGHNESS, texCoord).r;
+        roughness = max(roughness, .04);
+
+        float metalness = 0.f;
+        if (pc.has_metalness_map != 0) metalness = texture(METALNESS, texCoord).r;
+
+        vec3 prefilter_col = textureLod(PREFILTER_ENV, r, roughness * roughness * (pc.mip_levels - 1.0)).rgb;
+        vec2 brdf_val = texture(BRDF_LUT, vec2(roughness, NoV)).rg;
+
+        // referenced from s72-viewer
+        vec3 specular_tint = mix(vec3(.04), albedo, metalness);
+
+        vec3 specular_color = prefilter_col * (specular_tint * brdf_val.x + brdf_val.y);
+        vec3 irradiance = texture(IRRADIANCE, n).rgb;
+
+        float Fc = pow(1.0 - NoV, 5.0);
+        vec3 diff_factor = specular_tint + (1.0 - specular_tint) * Fc;
+        vec3 diff_albedo = mix(albedo, vec3(0.0), metalness) * irradiance / 3.14159265359;
+        diff_albedo *= diff_factor;
+        base_color = specular_color + diff_albedo;
     }
 
     vec3 radiance = min(base_color * exp2(pc.exposure), vec3(1e4)); // avoiding nans and infs
