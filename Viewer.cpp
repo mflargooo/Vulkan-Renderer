@@ -919,7 +919,7 @@ int Viewer::load_scene(const std::string &filename) {
 						pixels.clear();
 						pixels.reserve(x * y);
 
-						for (size_t i = 0; i < x * y; ++i) {
+						for (int i = 0; i < x * y; ++i) {
 							// switch from cubemap render -> vulkan convention
 							// rotate cubemap face conventions to upright
 							size_t f = 5 - i / (width * height); // current face
@@ -970,7 +970,7 @@ int Viewer::load_scene(const std::string &filename) {
 
 						std::vector< uint64_t > pixels;
 						pixels.reserve(x * y);
-						for (size_t i = 0; i < x * y; ++i) {
+						for (int i = 0; i < x * y; ++i) {
 							// switch from cubemap render -> vulkan convention
 							// rotate cubemap face conventions to upright
 							size_t f = 5 - i / (width * height); // current face
@@ -1040,9 +1040,9 @@ int Viewer::load_scene(const std::string &filename) {
 				}
 
 				materials.insert({ material.name, Material{ .type = 0, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 } });
-			} else if (auto p_mirror = std::get_if<S72::Material::Mirror>(&material.brdf)) {
+			} else if (/*auto p_mirror = */std::get_if<S72::Material::Mirror>(&material.brdf)) {
 				materials.insert({ material.name, Material{ .type = 1, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 }});
-			} else if (auto p_env = std::get_if<S72::Material::Environment>(&material.brdf)) {
+			} else if (/*auto p_env = */std::get_if<S72::Material::Environment>(&material.brdf)) {
 				materials.insert({ material.name, Material{ .type = 2, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 }});
 			} else if (auto p_pbr = std::get_if<S72::Material::PBR>(&material.brdf)) {
 				// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
@@ -1588,7 +1588,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
 					6, // sixth set
-					1, &texture_descriptors[inst->material.roughness_id>= 0 ? inst->material.roughness_id: 0], // descriptor sets count, ptr
+					1, &texture_descriptors[inst->material.roughness_id>= int32_t(0) ? inst->material.roughness_id: int32_t(0)], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 
@@ -1598,7 +1598,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
 					7, // seventh set
-					1, &texture_descriptors[inst->material.metalness_id >= 0 ? inst->material.metalness_id: 0], // descriptor sets count, ptr
+					1, &texture_descriptors[inst->material.metalness_id >= int32_t(0) ? inst->material.metalness_id: int32_t(0)], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 
@@ -1606,9 +1606,9 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					.material_type = inst->material.type,
 					.exposure = rtg.configuration.exposure,
 					.tonemap = rtg.configuration.tonemap,
-					.has_normal_map = inst->material.normal_id >= 0 ? 1U : 0U,
-					.has_roughness_map = inst->material.roughness_id >= 0 ? 1U : 0U,
-					.has_metalness_map = inst->material.metalness_id >= 0 ? 1U : 0U,
+					.has_normal_map = inst->material.normal_id >= int32_t(0) ? int32_t(1) : int32_t(0),
+					.has_roughness_map = inst->material.roughness_id >= int32_t(0) ? int32_t(1) : int32_t(0),
+					.has_metalness_map = inst->material.metalness_id >= int32_t(0) ? int32_t(1) : int32_t(0),
 					.mip_levels = mip_levels,
 				};
 

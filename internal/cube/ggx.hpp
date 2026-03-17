@@ -214,7 +214,6 @@ void ggx(const char *infile, const char *outfile) {
         }
 
         int face_width = cubemap_width, face_height = cubemap_width;
-        face_height;
 
         // smallest mip size is 32x32
         uint32_t mips = (uint32_t)std::floor(std::log2f((float)face_width) - std::log2f(32.f)) + 1;
@@ -281,7 +280,7 @@ void ggx(const char *infile, const char *outfile) {
         { // upload environment
             std::vector< uint64_t > pixels;
             pixels.reserve(cubemap_width * cubemap_height);
-            for (size_t i = 0; i < cubemap_width * cubemap_height; ++i) {
+            for (int i = 0; i < cubemap_width * cubemap_height; ++i) {
                 // switch from cubemap render -> vulkan convention
                 // rotate cubemap face conventions to upright
                 size_t f = i / (face_width * face_height); // current face

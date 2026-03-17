@@ -125,5 +125,5 @@ static std::vector< uint32_t > integrate_rgbe(void const *data, size_t width, si
             (((uint32_t) (rgbe.r & 0xff))      ) ;
     }
 
-    return std::move(rgbe_out);
+    return rgbe_out;
 };

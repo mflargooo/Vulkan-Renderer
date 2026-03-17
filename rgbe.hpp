@@ -10,9 +10,9 @@ inline glm::vec3 linear_from_rgbe(glm::u8vec4 color) {
 
     int e = color.a - 128;
     return glm::vec3{
-        std::ldexpf(((float)color.r + 0.5f) / 256.f, e),
-        std::ldexpf(((float)color.g + 0.5f) / 256.f, e),
-        std::ldexpf(((float)color.b + 0.5f) / 256.f, e),
+        std::ldexp(((float)color.r + 0.5f) / 256.f, e),
+        std::ldexp(((float)color.g + 0.5f) / 256.f, e),
+        std::ldexp(((float)color.b + 0.5f) / 256.f, e),
     };
 };
 
@@ -29,16 +29,16 @@ inline glm::u8vec4 rgbe_from_linear(glm::vec3 color) {
 
     int e;
 
-    float s = 255.999f * (std::frexpf(m, &e)) / m;
+    float s = 255.999f * (std::frexp(m, &e)) / m;
 
     if (e > 127) {
         return glm::u8vec4(255, 255, 255, 255);
     }
 
     return glm::u8vec4(
-        std::clamp(int64_t(color.r * s), 0LL, 255LL),
-        std::clamp(int64_t(color.g * s), 0LL, 255LL),
-        std::clamp(int64_t(color.b * s), 0LL, 255LL),
+        std::clamp(int64_t(color.r * s), int64_t(0), int64_t(255)),
+        std::clamp(int64_t(color.g * s), int64_t(0), int64_t(255)),
+        std::clamp(int64_t(color.b * s), int64_t(0), int64_t(255)),
         uint8_t(std::clamp(e + 128, 0, 255))
     );
 };
