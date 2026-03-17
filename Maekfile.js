@@ -34,6 +34,7 @@ const common_objs = [
 // it returns the path to the output object file
 const main_objs = [
 	maek.CPP('Viewer.cpp'),
+	maek.CPP('Lights.cpp'),
 	maek.CPP('PosColVertex.cpp'),
 	maek.CPP('PosNorTexVertex.cpp'),
 	maek.CPP('PosNorTanTexVertex.cpp'),

@@ -1004,7 +1004,7 @@ int Viewer::load_scene(const std::string &filename) {
 
 	{ // load materials
 		for (auto &[key, material] : s72.materials) {
-			// if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
+			if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
 			
 			int32_t albedo_id = -1;
 			int32_t normal_id = material.normal_map ? (int32_t)tex_ids[material.normal_map->path] : -1;
@@ -1121,6 +1121,14 @@ int Viewer::load_scene(const std::string &filename) {
 		}
 	}
 
+	{ // load lights
+		for (auto &[name, s72_light] : s72.lights) {
+			if (rtg.configuration.debug) std::cerr << "[LIGHT] " << name << std::endl;
+			ObjectsPipeline::Light light;
+			ObjectsPipeline::Light::pack_light(light, s72_light);
+			lights.insert({ name, light });
+		}
+	}
 	parse_scene_graph();
 
 	if (rtg.configuration.camera.compare("")) { // select correct scene camera, if exists
@@ -1214,17 +1222,9 @@ void Viewer::parse_scene_graph() { // populate all object instances
 				};
 			}
 		} else if (node->light) {
-			if (auto p_sun = std::get_if< S72::Light::Sun >(&node->light->source)) {
-				glm::vec3 direction = glm::normalize(glm::vec3(xf * glm::vec4(0.f, 0.f, 1.f, 0.f)));
-				
-				if (node->light->name == "Sun") {
-					world.SUN_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
-					world.SUN_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
-				} else if (node->light->name == "Sky") {
-					world.SKY_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
-					world.SKY_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
-				}
-			}
+			ObjectsPipeline::Light &light = lights[node->light->name];
+			ObjectsPipeline::Light::pack_light(light, *(node->light));
+			light.WORLD_FROM_LIGHT = xf;
 		}
 	}
 };
@@ -1408,6 +1408,9 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			.size = needed_bytes,
 		};
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
+	}
+
+	if (!lights.empty()) {
 	}
 
 	{ // mem barrier to make sure copies complete before rendering happens

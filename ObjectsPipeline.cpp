@@ -180,6 +180,25 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set7_METALNESS_MAP) );
     }
 
+    { // the set8_Lights layout holds an array of Light structures in a storage buffer used in the vertex shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings {
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set8_Lights) );
+    }
+
     { // create pipeline layout
         VkPushConstantRange range{
             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -187,7 +206,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             .size = sizeof(Constants),
         };
 
-        std::array< VkDescriptorSetLayout, 8 > layouts{
+        std::array< VkDescriptorSetLayout, 9 > layouts{
             set0_World,
             set1_Transforms,
             set2_Camera,
@@ -196,6 +215,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             set5_NORMAL_MAP,
             set6_ROUGHNESS_MAP,
             set7_METALNESS_MAP,
+            set8_Lights,
         };
 
         VkPipelineLayoutCreateInfo create_info{
@@ -324,6 +344,11 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
 }
 
 void Viewer::ObjectsPipeline::destroy(RTG &rtg) {
+    if (set8_Lights != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set8_Lights, nullptr);
+        set8_Lights = VK_NULL_HANDLE;
+    }
+
     if (set7_METALNESS_MAP != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(rtg.device, set7_METALNESS_MAP, nullptr);
         set7_METALNESS_MAP = VK_NULL_HANDLE;

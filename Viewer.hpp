@@ -75,6 +75,7 @@ struct Viewer : RTG::Application {
 		VkDescriptorSetLayout set5_NORMAL_MAP = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set6_ROUGHNESS_MAP = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set7_METALNESS_MAP = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set8_Lights = VK_NULL_HANDLE;
 
 		// types for descriptors
 		struct World {
@@ -91,6 +92,19 @@ struct Viewer : RTG::Application {
 			glm::mat4 WORLD_FROM_LOCAL_NORMAL;
 		};
 		static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4, "Transform is the expected size.");
+
+		struct Light { // light structure for all light types
+			glm::mat4 WORLD_FROM_LIGHT;
+			glm::vec3 radiance;
+			float attenuation;
+			float radius;
+			float blend;
+			float fov;
+			int32_t type;
+
+			static void pack_light(Light &light, S72::Light &s72_light);
+		};
+		static_assert(sizeof(Light) == 4*4*4+4*3+4+4+4+4+4, "Viewer::Light is packed");
 
 		struct Constants {
 			uint32_t material_type;
@@ -138,6 +152,11 @@ struct Viewer : RTG::Application {
 		Helpers::AllocatedBuffer Transforms_src; // host coherent; mapped
 		Helpers::AllocatedBuffer Transforms; // device-local
 		VkDescriptorSet Transforms_descriptors; // references Transforms
+
+		// location for ObjectPipeline::Lights data (streamed to GPU per frame)
+		Helpers::AllocatedBuffer Lights_src;
+		Helpers::AllocatedBuffer Lights;
+		VkDescriptorSet Lights_descriptors;
 	};
 	std::vector< Workspace > workspaces; 
 
@@ -260,6 +279,8 @@ struct Viewer : RTG::Application {
 	// texture path -> *_view id
 	std::unordered_map< std::string, uint32_t > tex_ids;
 	std::unordered_map< std::string, uint32_t > cubemap_ids;
+
+	std::unordered_map< std::string, ObjectsPipeline::Light > lights;
 
 	int load_scene(const std::string &file);
 	void parse_scene_graph();
