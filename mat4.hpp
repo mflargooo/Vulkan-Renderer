@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 // Note col-major storage order (like in OpenGL / GLSL)
 using mat4 = std::array< float, 16 >;
@@ -41,20 +42,20 @@ inline mat4 operator*(mat4 const &A, mat4 const &B) {
 	return ret;
 }
 
-inline mat4 perspective(float vfov, float aspect, float near, float far) {
+inline glm::mat4 perspective(float vfov, float aspect, float near, float far) {
     const float e = 1.f / std::tan(vfov / 2.f);
     const float a = aspect;
     const float n = near;
     const float f = far;
-    return mat4{
+    return glm::make_mat4(mat4{
         e/a, 0.f, 0.f, 0.f,
         0.f, -e, 0.f, 0.f,
         0.f, 0.f, -.5f - .5f * (f+n)/(f-n), -1.f,
         0.f, 0.f, -(f*n)/(f-n), 0.f 
-    };
+    }.data());
 }
 
-inline mat4 look_at(
+inline glm::mat4 look_at(
     float eye_x, float eye_y, float eye_z,
     float target_x, float target_y, float target_z,
     float up_x, float up_y, float up_z) {
@@ -92,15 +93,15 @@ inline mat4 look_at(
     float up_dot_eye = up_x * eye_x + up_y * eye_y + up_z * eye_z;
     float in_dot_eye = in_x * eye_x + in_y * eye_y + in_z * eye_z;
 
-    return mat4{
+    return glm::make_mat4(mat4{
         right_x, up_x, -in_x, 0.f,
         right_y, up_y, -in_y, 0.f,
         right_z, up_z, -in_z, 0.f,
         -right_dot_eye, -up_dot_eye, in_dot_eye, 1.f
-    };
+    }.data());
 }
 
-inline mat4 orbit(
+inline glm::mat4 orbit(
     float target_x, float target_y, float target_z,
     float azimuth, float elevation, float radius
 ) {
@@ -136,19 +137,10 @@ inline mat4 orbit(
     float out_dot_eye = out_x * eye_x + out_y * eye_y + out_z * eye_z;
 
     // final local-from-world (col-maj)
-    return mat4 {
+    return glm::make_mat4(mat4{
         right_x, up_x, out_x, 0.f,
         right_y, up_y, out_y, 0.f,
         right_z, up_z, out_z, 0.f,
         -right_dot_eye, -up_dot_eye, -out_dot_eye, 1.f
-    };
-}
-
-inline mat4 mat4_from_glm(glm::mat4 A) {
-    mat4 B;
-    for (size_t i = 0; i < 4; ++i) {
-        for (size_t j = 0; j < 4; ++j)
-        B[4 * i + j] = A[(glm::mat4::length_type)i][(glm::mat4::length_type)j];
-    }
-    return B;
+    }.data());
 }

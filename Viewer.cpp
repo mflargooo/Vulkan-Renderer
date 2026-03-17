@@ -1,6 +1,7 @@
-#include "Tutorial.hpp"
+#include "Viewer.hpp"
 
 #include "VK.hpp"
+#include "mat4.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -9,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <filesystem>
 
 // for building the scene
 #include <stack>
@@ -16,19 +18,20 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <s72/S72.hpp>
 #include <s72/DataStream.hpp>
 #include <variant>
 #include <limits>
 #include <algorithm>
 
+// for environment
+#include "rgbe.hpp"
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
 #include "external/stb/stb_image.h"
 
-Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
+Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// select depth format
 	// 	(at least one of these two must be supported according to the spec; but neither are required)
 	depth_format = rtg.helpers.find_image_format(
@@ -272,8 +275,26 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
+	{ // static sun and sky
+		world.SKY_DIRECTION.x = 0.0f;
+		world.SKY_DIRECTION.y = 0.0f;
+		world.SKY_DIRECTION.z = 1.0f;
+
+		world.SKY_ENERGY.r = 0.1f;
+		world.SKY_ENERGY.g = 0.1f;
+		world.SKY_ENERGY.b = 0.2f;
+
+		world.SUN_DIRECTION.x = 6.0f / 23.0f;
+		world.SUN_DIRECTION.y = 13.0f / 23.0f;
+		world.SUN_DIRECTION.z = 18.0f / 23.0f;
+
+		world.SUN_ENERGY.r = 1.0f;
+		world.SUN_ENERGY.g = 1.0f;
+		world.SUN_ENERGY.b = 0.9f;
+	}
+
 	{ // make some textures
-		{ // tex 0 is dark / light grey checker with red origin
+		{ // tex 0 is dark / light grey checker with red origin - debug texture
 			uint32_t size = 128;
 			std::vector< uint32_t > data;
 			data.reserve(size * size);
@@ -303,51 +324,23 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
 		}
 
-		{ // tex 1 will be classic 'xor' tex
-			uint32_t size = 256;
-			std::vector< uint32_t > data;
-			data.reserve(size * size);
-			for (uint32_t y = 0; y < size; ++y) {
-				for (uint32_t x = 0; x < size; ++x) {
-					uint8_t r = uint8_t(x) ^ uint8_t(y);
-					uint8_t g = uint8_t(x + 128) ^ uint8_t(y);
-					uint8_t b = uint8_t(x) ^ uint8_t(y + 27);
-					uint8_t a = 0xff;
-					data.emplace_back( uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24) );
-				}
-			}
-			assert(data.size() == size * size);
-
+		{ // tex 1 will be LUT texture at known location
+			std::string lut_path = "bin/.lut"; // sibling of viewer.exe
+			uint32_t size = 512;
+			std::vector< char > data;
+			DataStream::load(lut_path, data);
+			assert(data.size() == size * size * sizeof(uint32_t));
 			// make a place for the tex to live on GPU
 			textures.emplace_back(rtg.helpers.create_image(
 				VkExtent2D{ .width = size, .height = size }, // size of img
-				VK_FORMAT_R8G8B8A8_SRGB, // how to interpret image data
+				VK_FORMAT_R16G16_SFLOAT, // how to interpret image data
 				VK_IMAGE_TILING_OPTIMAL,
 				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
 				Helpers::Unmapped
 			));
-
-			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+			rtg.helpers.transfer_to_image(data.data(), data.size(), textures.back());
 		}
-	}
-
-	{ // static sun and sky
-		world.SKY_DIRECTION.x = 0.0f;
-		world.SKY_DIRECTION.y = 0.0f;
-		world.SKY_DIRECTION.z = 1.0f;
-
-		world.SKY_ENERGY.r = 0.1f;
-		world.SKY_ENERGY.g = 0.1f;
-		world.SKY_ENERGY.b = 0.2f;
-
-		world.SUN_DIRECTION.x = 6.0f / 23.0f;
-		world.SUN_DIRECTION.y = 13.0f / 23.0f;
-		world.SUN_DIRECTION.z = 18.0f / 23.0f;
-
-		world.SUN_ENERGY.r = 1.0f;
-		world.SUN_ENERGY.g = 1.0f;
-		world.SUN_ENERGY.b = 0.9f;
 	}
 	
 	if (rtg.configuration.scene.compare("")) { // Load scene
@@ -431,7 +424,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 			.descriptorPool = texture_descriptor_pool,
 			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set2_TEXTURE,
+			.pSetLayouts = &objects_pipeline.set3_TEXTURE,
 		};
 		texture_descriptors.assign(textures.size(), VK_NULL_HANDLE);
 		for (VkDescriptorSet &descriptor_set : texture_descriptors) {
@@ -463,14 +456,162 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 	}
+
+	// cubemap initialization
+	// env_maps vector is ordered such that the ith entry is the ith mip
+	// the lambertian prefiltered.
+
+	// make cubemap views 0 - lambertian, 1 - mirror, 2 - env, 3 - pbr
+	{ // make image views for the env_maps
+		env_map_views.reserve(3);
+		// lambertian
+
+		struct EnvMapView {
+			VkImageViewType type;
+			Helpers::AllocatedImage *image = nullptr;
+			uint32_t level_count = 1;
+		} view_infos[3] = { 
+			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
+			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = mip_levels }, // pbr
+			{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
+		};
+
+		for (EnvMapView &info : view_infos) {
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = info.image->handle,
+				.viewType = info.type,
+				.format = info.image->format,
+				// .components sets swizzling and is fine when zero inited
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = info.level_count,
+					.baseArrayLayer = 0,
+					.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
+				},
+			};
+
+			VkImageView image_view = VK_NULL_HANDLE;
+			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
+
+			env_map_views.emplace_back(image_view);
+		}
+	}
+
+	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels, 0 }) { // make a sampler for the env_maps
+		env_map_samplers.emplace_back(VK_NULL_HANDLE);
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.flags = 0,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.mipLodBias = 0.f,
+			.anisotropyEnable  = VK_FALSE,
+			.maxAnisotropy = 0.f,
+			.compareEnable = VK_FALSE,
+			.compareOp = VK_COMPARE_OP_ALWAYS,
+			.minLod = 0.f,
+			.maxLod = float(level_count),
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &env_map_samplers.back()) );
+	}
+
+	{ // create the cubemap descriptor pool
+		uint32_t per_cubemap_view = uint32_t(env_map_views.size()); // for easier to read counting
+
+		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1 * 1 * per_cubemap_view, // one desc per set, on set per tex
+			},
+		};
+
+		VkDescriptorPoolCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+			.maxSets = 1 * per_cubemap_view, // one set per texture
+			.poolSizeCount = uint32_t(pool_sizes.size()),
+			.pPoolSizes = pool_sizes.data(),
+		};
+
+		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &env_map_descriptor_pool) );
+	}
+
+	{ // allocate and write the cubemap descriptor sets
+		// allocate the descriptors (using same alloc_info)
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = env_map_descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set4_ENV_MAP,
+		};
+		env_map_descriptor = VK_NULL_HANDLE;
+		VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &env_map_descriptor) );
+
+		// write descriptor for env_maps
+		std::vector< VkDescriptorImageInfo > infos(env_map_views.size());
+		std::vector< VkWriteDescriptorSet > writes(env_map_views.size());
+
+		for (auto const &cubemap_view : env_map_views) {
+			size_t i = &cubemap_view - &env_map_views[0];
+
+			infos[i] = VkDescriptorImageInfo{
+				.sampler = env_map_samplers[i],
+				.imageView = cubemap_view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+			writes[i] = VkWriteDescriptorSet{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = env_map_descriptor,
+				.dstBinding = (uint32_t)i,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &infos[i],
+			};
+		}
+
+		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
+	}
 }
 
-Tutorial::~Tutorial() {
+Viewer::~Viewer() {
 	//just in case rendering is still in flight, don't destroy resources:
 	//(not using VK macro to avoid throw-ing in destructor)
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
-		std::cerr << "Failed to vkDeviceWaitIdle in Tutorial::~Tutorial [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
+		std::cerr << "Failed to vkDeviceWaitIdle in Viewer::~Viewer [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
+
+	if (env_map_descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, env_map_descriptor_pool, nullptr);
+		env_map_descriptor_pool = nullptr;
+	}
+
+	if (!env_map_samplers.empty()) {
+		for (uint32_t i = 0; i < env_map_samplers.size(); ++i) {
+			vkDestroySampler(rtg.device, env_map_samplers[i], nullptr);
+			env_map_samplers[i] = VK_NULL_HANDLE;
+		}
+	}
+
+	for (VkImageView &view : env_map_views) {
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	env_map_views.clear();
+
+	for (auto &env_map : env_maps) {
+		rtg.helpers.destroy_cubemap(std::move(env_map));
+	}
+	env_maps.clear();
 
 	if (texture_descriptor_pool) {
 		vkDestroyDescriptorPool(rtg.device, texture_descriptor_pool, nullptr);
@@ -567,7 +708,7 @@ Tutorial::~Tutorial() {
 	}
 }
 
-void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
+void Viewer::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	// clean up exist framebufs (and depth img)
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
 		destroy_framebuffers();
@@ -622,7 +763,7 @@ void Tutorial::on_swapchain(RTG &rtg_, RTG::SwapchainEvent const &swapchain) {
 	}
 }
 
-void Tutorial::destroy_framebuffers() {
+void Viewer::destroy_framebuffers() {
 	for (VkFramebuffer &framebuffer : swapchain_framebuffers) {
 		assert(framebuffer != VK_NULL_HANDLE);
 		vkDestroyFramebuffer(rtg.device, framebuffer, nullptr);
@@ -637,7 +778,7 @@ void Tutorial::destroy_framebuffers() {
 	rtg.helpers.destroy_image(std::move(swapchain_depth_image));
 }
 
-int Tutorial::load_scene(const std::string &filename) {
+int Viewer::load_scene(const std::string &filename) {
 
 	// try-catch from print-scene.cpp
 	try {
@@ -656,7 +797,7 @@ int Tutorial::load_scene(const std::string &filename) {
 			}
 
 			std::vector< char > vertices; 
-			VertexStream::load(df.path, vertices); // vertex data
+			DataStream::load(df.path, vertices); // vertex data
 
 			// allocate new buffer
 			Helpers::AllocatedBuffer buffer;
@@ -684,13 +825,13 @@ int Tutorial::load_scene(const std::string &filename) {
 			auto const &stride = mesh.attributes.at("POSITION").stride;
 			auto const &offset = mesh.attributes.at("POSITION").offset;
 			std::vector< char > data;
-			char *vertices = VertexStream::load(path, data).data(); // vertex data
+			char *vertices = DataStream::load(path, data).data(); // vertex data
 			auto &buffer = scene_vertices[path];
 			AABB aabb = AABB{
 				.min = glm::vec3(FLT_MAX),
 				.max = glm::vec3(-FLT_MAX),
 			};
-			for (size_t i = 1; i < 36; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
+			for (size_t i = 1; i < mesh.count; ++i) { // remember to revert this -- I think is data layout is issue for infinite edge, but for now, skip that vertex position
 				glm::vec3 pos = glm::vec3{
 					*(float *)&vertices[i * stride + offset],
 					*(float *)&vertices[i * stride + offset + 4],
@@ -698,6 +839,13 @@ int Tutorial::load_scene(const std::string &filename) {
 				};
 				aabb.min = glm::min(aabb.min, pos);
 				aabb.max = glm::max(aabb.max, pos);
+			}
+
+			for (glm::length_t i = 0; i < 3; ++i) {
+				if (std::abs(aabb.max[i] - aabb.min[i]) < .00001f) {
+					aabb.min[i] -= .000005f;
+					aabb.max[i] += .000005f;
+				}
 			}
 
 			// for now, index by buffer, later by mesh
@@ -710,78 +858,266 @@ int Tutorial::load_scene(const std::string &filename) {
 			if (rtg.configuration.debug) std::cerr << "[TEXTURE] " << texture.src << std::endl;
 			int x = 0, y = 0, c = 0;
 			stbi_set_flip_vertically_on_load(true);
+			// stbi loads with 8 bit channels, hence static 32 bits chosen
 			uint32_t *tex = (uint32_t *)stbi_load(texture.path.data(), &x, &y, &c, 4);
+			uint32_t width = (uint32_t)x, height = (uint32_t)y;
 
-			if (tex) {
+			if (texture.type == S72::Texture::Type::flat) {
 				VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
 				if (texture.format == S72::Texture::Format::linear) {
 					format = VK_FORMAT_R8G8B8A8_UNORM;
 				}
 
 				// track index of texture
-				tex_ids.insert({ texture.path, (uint32_t)textures.size() });
+				tex_ids.insert({ texture.path, (int32_t)textures.size() });
 				textures.emplace_back(rtg.helpers.create_image(
-					VkExtent2D{ .width = (uint32_t)x, .height = (uint32_t)y },
+					VkExtent2D{ .width = width, .height = height },
 					format,
 					VK_IMAGE_TILING_OPTIMAL,
 					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 					Helpers::Unmapped
 				));
+				
+				rtg.helpers.transfer_to_image(tex, sizeof(uint32_t) * x * y, textures.back());
 
-				rtg.helpers.transfer_to_image(tex, sizeof(tex[0]) * x * y, textures.back());
+			} else if (texture.type == S72::Texture::Type::cube) {
+				height = width; // assume always vertical strip, for now
 
-				stbi_image_free(tex);
-			} else {
-				std::cout << "Failed to load texture: " << stbi_failure_reason() << std::endl; 
+				{
+					uint32_t expected_mip_levels = (uint32_t)std::floor(std::log2f((float)width) - std::log2f(32.f)) + 1;
+					// material-dependent env maps
+					std::vector< std::string > mip_paths;
+					{ // mips paths
+						for (uint32_t m = 1; m < expected_mip_levels; ++m) {
+							std::string path = texture.path.substr(0, texture.path.size() - 3) + std::to_string(m) + ".png";
+							if (std::filesystem::exists(path)) mip_paths.emplace_back(path);
+						}
+					}
+					mip_levels = std::max((uint32_t)mip_paths.size(), 1U);
+					// track index of texture
+					cubemap_ids.insert({ texture.path, (uint32_t)env_maps.size() });
+					env_maps.emplace_back(rtg.helpers.create_cubemap(
+						VkExtent2D{ .width = width, .height = height },
+						VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+						Helpers::Unmapped,
+						mip_levels
+					));
+
+					uint32_t m = 0;
+					std::vector< uint64_t > pixels;
+					do {
+						if (m > 0) {
+							tex = (uint32_t *)stbi_load(mip_paths[m-1].data(), &x, &y, &c, 4);
+							width = (uint32_t)x, height = (uint32_t)y;
+							height = width; // assume always vertical strip, for now
+						}
+
+						pixels.clear();
+						pixels.reserve(x * y);
+
+						for (int i = 0; i < x * y; ++i) {
+							// switch from cubemap render -> vulkan convention
+							// rotate cubemap face conventions to upright
+							size_t f = 5 - i / (width * height); // current face
+							size_t j = i % (width * height); // jth pixel of face
+						
+							size_t col = j % width; 
+							size_t row = j / width;
+							size_t k = (height - 1 - row) * width + col;
+
+							uint32_t pixel = tex[f * height * width + k];
+
+							glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
+								pixel        & 0xff,
+								(pixel >>  8) & 0xff,
+								(pixel >> 16) & 0xff,
+								(pixel >> 24) & 0xff
+							));
+
+							pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
+						}
+						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
+						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, env_maps.back(), m);
+						stbi_image_free(tex);
+						m += 1;
+					} while(m < mip_levels);
+				}
+
+				{
+					// load lambertian
+					for (std::string suffix : { "lambertian.png" }){
+						std::string path = texture.path.substr(0, texture.path.size() - 3) + suffix;
+						if (!std::filesystem::exists(path)) continue;
+
+						tex = (uint32_t *)stbi_load(path.data(), &x, &y, &c, 4);
+						width = (uint32_t)x, height = (uint32_t)y;
+						height = width; // assume always vertical strip, for now
+						
+						// track index of texture
+						cubemap_ids.insert({ path, (uint32_t)env_maps.size() });
+						env_maps.emplace_back(rtg.helpers.create_cubemap(
+							VkExtent2D{ .width = width, .height = height },
+							VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
+							VK_IMAGE_TILING_OPTIMAL,
+							VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+							VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+							Helpers::Unmapped
+						));
+
+						std::vector< uint64_t > pixels;
+						pixels.reserve(x * y);
+						for (int i = 0; i < x * y; ++i) {
+							// switch from cubemap render -> vulkan convention
+							// rotate cubemap face conventions to upright
+							size_t f = 5 - i / (width * height); // current face
+							size_t j = i % (width * height); // jth pixel of face
+							
+						size_t col = j % width; 
+						size_t row = j / width;	
+						size_t k = (height - 1 - row) * width + col;
+
+						uint32_t pixel = tex[f * height * width + k];
+
+							glm::vec3 rgb = linear_from_rgbe(glm::u8vec4(
+								pixel        & 0xff,
+								(pixel >>  8) & 0xff,
+								(pixel >> 16) & 0xff,
+								(pixel >> 24) & 0xff
+							));
+
+							pixels.emplace_back(pack_r16g16b16a16_from_linear(rgb));
+						}
+						assert(pixels.size() * sizeof(pixels[0]) == sizeof(uint64_t) * x * y);
+						rtg.helpers.transfer_to_cubemap(pixels.data(), sizeof(uint64_t) * x * y, env_maps.back());
+						stbi_image_free(tex);
+					}
+				}
 			}
 		}
 	}
+
+	std::cout << "Loaded " << textures.size() << " textures and " << env_maps.size() << " env_maps!" << std::endl;
 
 	{ // load materials
 		for (auto &[key, material] : s72.materials) {
 			// if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
 			
-			int albedo_id = -1;
-			int normal_id = -1;
-			int displacement_id = -1;
+			int32_t albedo_id = -1;
+			int32_t normal_id = material.normal_map ? (int32_t)tex_ids[material.normal_map->path] : -1;
+			int32_t displacement_id = material.displacement_map ? (int32_t)tex_ids[material.displacement_map->path] : -1;
+			int32_t roughness_id = -1;
+			int32_t metalness_id = -1;
 
-			// for now we assume lambertian
-			auto p_brdf = std::get_if<S72::Material::Lambertian>(&material.brdf);
-			if (!p_brdf) {
-				std::cerr << "Skipping material \'" << material.name << "\' since it is not Lambertian." << std::endl;
-				continue;
+			if (auto p_lamb = std::get_if<S72::Material::Lambertian>(&material.brdf)) {
+				S72::Material::Lambertian lamb = *p_lamb;
+				// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
+				if (auto p_albedo = std::get_if<glm::vec3>(&lamb.albedo)) {
+					glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
+					// simple monocolor texture
+					uint32_t size = 32;
+					std::vector< glm::u8vec4 > data(size * size, albedo);
+					assert(data.size() == size * size);
+
+					albedo_id = (int)textures.size();
+					// make place for tex to live on GPU
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = size, .height = size }, // size of img
+						VK_FORMAT_R8G8B8A8_UNORM, // how to interpret image data
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+						Helpers::Unmapped
+					));
+
+					// transfer data
+					rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+				} else if (auto p_texture = std::get_if<S72::Texture *>(&lamb.albedo)) {
+					albedo_id = (int32_t)tex_ids[(*p_texture)->path];
+				}
+
+				materials.insert({ material.name, Material{ .type = 0, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 } });
+			} else if (/*auto p_mirror = */std::get_if<S72::Material::Mirror>(&material.brdf)) {
+				materials.insert({ material.name, Material{ .type = 1, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 }});
+			} else if (/*auto p_env = */std::get_if<S72::Material::Environment>(&material.brdf)) {
+				materials.insert({ material.name, Material{ .type = 2, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = -1, .metalness_id = -1 }});
+			} else if (auto p_pbr = std::get_if<S72::Material::PBR>(&material.brdf)) {
+				// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
+				if (auto p_albedo = std::get_if<glm::vec3>(&p_pbr->albedo)) {
+					glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
+					// simple monocolor texture
+					uint32_t size = 32;
+					std::vector< glm::u8vec4 > data(size * size, albedo);
+					assert(data.size() == size * size);
+
+					albedo_id = (int)textures.size();
+					// make place for tex to live on GPU
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = size, .height = size }, // size of img
+						VK_FORMAT_R8G8B8A8_UNORM, // how to interpret image data
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+						Helpers::Unmapped
+					));
+
+					// transfer data
+					rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+				} else if (auto p_texture = std::get_if<S72::Texture *>(&p_pbr->albedo)) {
+					albedo_id = (int32_t)tex_ids[(*p_texture)->path];
+				}
+
+				if (auto p_roughness = std::get_if< float >(&p_pbr->roughness)) {
+					// simple monocolor texture
+					uint32_t size = 32;
+					std::vector< float > data(size * size, *p_roughness);
+					assert(data.size() == size * size);
+
+					roughness_id = (int)textures.size();
+					// make place for tex to live on GPU
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = size, .height = size }, // size of img
+						VK_FORMAT_R32_SFLOAT, // how to interpret image data
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+						Helpers::Unmapped
+					));
+
+					// transfer data
+					rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+				} else if (auto p_roughness_map = std::get_if<S72::Texture *>(&p_pbr->roughness)) {
+					roughness_id = (int32_t)tex_ids[(*p_roughness_map)->path];
+				}
+
+				if (auto p_metalness = std::get_if< float >(&p_pbr->metalness)) {
+					// simple monocolor texture
+					uint32_t size = 32;
+					std::vector< float > data(size * size, *p_metalness);
+					assert(data.size() == size * size);
+
+					metalness_id = (int)textures.size();
+					// make place for tex to live on GPU
+					textures.emplace_back(rtg.helpers.create_image(
+						VkExtent2D{ .width = size, .height = size }, // size of img
+						VK_FORMAT_R32_SFLOAT, // how to interpret image data
+						VK_IMAGE_TILING_OPTIMAL,
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+						Helpers::Unmapped
+					));
+
+					// transfer data
+					rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
+				} else if (auto p_metalness_map = std::get_if<S72::Texture *>(&p_pbr->metalness)) {
+					metalness_id = (int32_t)tex_ids[(*p_metalness_map)->path];
+				}
+				
+				materials.insert({ material.name, Material{ .type = 3, .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id, .roughness_id = roughness_id, .metalness_id = metalness_id }});
 			}
-			S72::Material::Lambertian lamb = *p_brdf;
-			// https://stackoverflow.com/questions/63482070/how-can-i-code-something-like-a-switch-for-stdvariant
-			if (auto p_albedo = std::get_if<glm::vec3>(&lamb.albedo)) {
-				glm::u8vec4 albedo = glm::u8vec4(255.f * glm::clamp(glm::vec4(*p_albedo, 1.f), 0.f, 1.f));
-				// simple monocolor texture
-				uint32_t size = 128;
-				std::vector< glm::u8vec4 > data(size * size, albedo);
-				assert(data.size() == size * size);
-
-				albedo_id = (int)textures.size();
-				// make place for tex to live on GPU
-				textures.emplace_back(rtg.helpers.create_image(
-					VkExtent2D{ .width = size, .height = size }, // size of img
-					VK_FORMAT_R8G8B8A8_UNORM, // how to interpret image data
-					VK_IMAGE_TILING_OPTIMAL,
-					VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // will sample and upload
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
-					Helpers::Unmapped
-				));
-
-				// transfer data
-				rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-			} else if (auto p_texture = std::get_if<S72::Texture *>(&lamb.albedo)) {
-				albedo_id = (int)tex_ids[(*p_texture)->path];
-			}
-
-			if (material.normal_map) normal_id = (int)tex_ids[material.normal_map->path];	
-			if (material.displacement_map) displacement_id = (int)tex_ids[material.displacement_map->path];
-
-			materials.insert({ material.name, Material{ .albedo_id = albedo_id, .normal_id = normal_id, .displacement_id = displacement_id } });
 		}
 	}
 
@@ -794,7 +1130,7 @@ int Tutorial::load_scene(const std::string &filename) {
 			exit(1);
 		}
 
-		selected_scene_camera = it;
+	selected_scene_camera = it;
 	} else if (scene_cameras.size() > 0) {
 		selected_scene_camera = scene_cameras.begin();
 	} else {
@@ -810,7 +1146,7 @@ int Tutorial::load_scene(const std::string &filename) {
 	return 0;
 };
 
-void Tutorial::parse_scene_graph() { // populate all object instances
+void Viewer::parse_scene_graph() { // populate all object instances
 	object_instances.clear();
 
 	struct Element {
@@ -845,10 +1181,11 @@ void Tutorial::parse_scene_graph() { // populate all object instances
 		if (node->mesh) {
 			// if (rtg.configuration.debug) std::cerr << "[MESH] " << node->mesh->name << " located at " << glm::to_string(xf) << std::endl; 
 			
-			Material material{ .albedo_id = 0 };
+			Material material;
 			if (node->mesh->material) {
 				material = materials[node->mesh->material->name];
 			}
+
 			// create object instance
 			object_instances.emplace_back(ObjectInstance{
 				.vertices{
@@ -857,18 +1194,18 @@ void Tutorial::parse_scene_graph() { // populate all object instances
 				},
 				.buffer = &scene_vertices.at(node->mesh->attributes.at("POSITION").src.path),
 				.transform{
-					/* .CLIP_FROM_LOCAL = mat4_from_glm(glm::mat4(1.f)), -- filled by update */
-					.WORLD_FROM_LOCAL = mat4_from_glm(xf),
-					.WORLD_FROM_LOCAL_NORMAL = mat4_from_glm(glm::transpose(glm::inverse(xf))),
+					/* .CLIP_FROM_LOCAL = glm::mat4(1.f), -- filled by update */
+					.WORLD_FROM_LOCAL = xf,
+					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(glm::mat3(xf))),
 				},
-				.texture = uint32_t(material.albedo_id),
+				.material = material,
 			});
 		} else if (node->camera) {
 			// if (rtg.configuration.debug) std::cerr << "[CAMERA] " << node->camera->name << " located at " << glm::to_string(xf) << std::endl; 
 			if (auto p_proj = std::get_if<S72::Camera::Perspective>(&node->camera->projection)) {
 				scene_cameras[node->camera->name] = {
 					.transform = {
-						.WORLD_FROM_LOCAL = mat4_from_glm(xf),
+						.WORLD_FROM_LOCAL = xf,
 					},
 					.aspect = p_proj->aspect,
 					.vfov = p_proj->vfov,
@@ -892,7 +1229,7 @@ void Tutorial::parse_scene_graph() { // populate all object instances
 	}
 };
 
-void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
+void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	//assert that parameters are valid:
 	assert(&rtg == &rtg_);
 	assert(render_params.workspace_index < workspaces.size());
@@ -962,7 +1299,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 	{ // upload cam info
 		LinesPipeline::Camera camera{
-			.CLIP_FROM_WORLD = CLIP_FROM_WORLD
+			.CLIP_FROM_WORLD = CLIP_FROM_WORLD,
 		};
 		assert(workspace.Camera_src.size == sizeof(camera));
 
@@ -1193,10 +1530,11 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
 
-			{ // bind World and Transforms descriptor sets
-				std::array< VkDescriptorSet, 2 > descriptor_sets {
+			{ // bind World, Transforms, Camera descriptor sets
+				std::array< VkDescriptorSet, 3 > descriptor_sets {
 					workspace.World_descriptors, // 0: World
 					workspace.Transforms_descriptors, // 1: Transforms
+					workspace.Camera_descriptors, // 2: Camera
 				};
 				vkCmdBindDescriptorSets(
 					workspace.command_buffer, // cmd buf
@@ -1219,10 +1557,63 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					workspace.command_buffer, // cmd buf
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
-					2, // second set
-					1, &texture_descriptors[inst->texture], // descriptor sets count, ptr
+					3, // third set
+					1, &texture_descriptors[inst->material.albedo_id >= 0 ? inst->material.albedo_id : 0], // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
+
+				// bind envemap descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					4, // fourth set
+					1, &env_map_descriptor, // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
+				// bind normal_map descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					5, // fifth set
+					1, &texture_descriptors[inst->material.normal_id >= 0 ? inst->material.normal_id : 0], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
+				// bind roughness_map descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					6, // sixth set
+					1, &texture_descriptors[inst->material.roughness_id>= int32_t(0) ? inst->material.roughness_id: int32_t(0)], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
+				// bind metalness_map descriptor set
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					7, // seventh set
+					1, &texture_descriptors[inst->material.metalness_id >= int32_t(0) ? inst->material.metalness_id: int32_t(0)], // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+
+				ObjectsPipeline::Constants constants = {
+					.material_type = inst->material.type,
+					.exposure = rtg.configuration.exposure,
+					.tonemap = rtg.configuration.tonemap,
+					.has_normal_map = inst->material.normal_id >= int32_t(0) ? int32_t(1) : int32_t(0),
+					.has_roughness_map = inst->material.roughness_id >= int32_t(0) ? int32_t(1) : int32_t(0),
+					.has_metalness_map = inst->material.metalness_id >= int32_t(0) ? int32_t(1) : int32_t(0),
+					.mip_levels = mip_levels,
+				};
+
+				// push constants type
+				vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ObjectsPipeline::Constants), &constants);
 
 				vkCmdDraw(workspace.command_buffer, inst->vertices.count, 1, inst->vertices.first, index);
 			}
@@ -1262,7 +1653,7 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 }
 
 
-bool Tutorial::cull_frustrum(glm::vec3 frustrum[8], glm::vec3 bbox[8]) {
+bool Viewer::cull_frustrum(glm::vec3 frustrum[8], glm::vec3 bbox[8]) {
 	glm::vec3 frustrum_normals[5] = {
 		glm::normalize(glm::cross(frustrum[0] - frustrum[1], frustrum[2] - frustrum[1])), // frustrum forward
 		glm::normalize(glm::cross(frustrum[0] - frustrum[1], frustrum[4] - frustrum[1])), // frustrum bottom
@@ -1363,7 +1754,7 @@ bool Tutorial::cull_frustrum(glm::vec3 frustrum[8], glm::vec3 bbox[8]) {
 	return false;
 };
 
-void Tutorial::update(float dt) {
+void Viewer::update(float dt) {
 	time = std::fmod(time + dt, 60.f);
 
 	if (!pause_animation) {
@@ -1423,7 +1814,7 @@ void Tutorial::update(float dt) {
 			scene_camera.aspect, // rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
 			scene_camera.near, //near
 			scene_camera.far //far
-		) * mat4_from_glm(glm::inverse(glm::make_mat4(scene_camera.transform.WORLD_FROM_LOCAL.data())));
+		) * glm::inverse(scene_camera.transform.WORLD_FROM_LOCAL);
 	} else if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
 		OrbitCamera &user_camera = camera_mode == CameraMode::Free ? free_camera : debug_camera;
 		CLIP_FROM_WORLD = perspective(
@@ -1458,7 +1849,7 @@ void Tutorial::update(float dt) {
 				scene_camera.aspect, // rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
 				scene_camera.near, //near
 				scene_camera.far //far
-			) * mat4_from_glm(glm::inverse(glm::make_mat4(scene_camera.transform.WORLD_FROM_LOCAL.data())));
+			) * glm::inverse(scene_camera.transform.WORLD_FROM_LOCAL);
 		}
 	}
 	
@@ -1469,13 +1860,13 @@ void Tutorial::update(float dt) {
 		drawables.clear();
 
 		glm::mat4 WORLD_FROM_CLIP = (camera_mode == CameraMode::Debug) ? 
-			glm::inverse(glm::make_mat4(debug_CLIP_FROM_WORLD.data())) : glm::inverse(glm::make_mat4(CLIP_FROM_WORLD.data()));
+			glm::inverse(debug_CLIP_FROM_WORLD) : glm::inverse(CLIP_FROM_WORLD);
 		
 		for (auto &inst : object_instances) {
 			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;
 
-			glm::mat4 WORLD_FROM_LOCAL = glm::make_mat4(inst.transform.WORLD_FROM_LOCAL.data());
-			Tutorial::AABB aabb = aabbs[inst.buffer];
+			glm::mat4 WORLD_FROM_LOCAL = inst.transform.WORLD_FROM_LOCAL;
+			Viewer::AABB aabb = aabbs[inst.buffer];
 			glm::vec3 bbox[8] = {
 				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.min.y, aabb.min.z, 1.f }),
 				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.min.y, aabb.min.z, 1.f }),
@@ -1564,7 +1955,7 @@ void Tutorial::update(float dt) {
 	if (camera_mode == CameraMode::Debug) {
 
 		{ // draw frustrum
-			glm::mat4 debug_WORLD_FROM_CLIP = glm::inverse(glm::make_mat4(debug_CLIP_FROM_WORLD.data()));
+			glm::mat4 debug_WORLD_FROM_CLIP = glm::inverse(debug_CLIP_FROM_WORLD);
 			// frustrum in clip space transformed to world
 			glm::vec4 frustrum4[8] = {
 				debug_WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f, 0.f,  1.f }, // near bl
@@ -1625,7 +2016,7 @@ void Tutorial::update(float dt) {
 }
 
 
-void Tutorial::on_input(InputEvent const &evt) {
+void Viewer::on_input(InputEvent const &evt) {
 	// if current actions it get input prio
 	if (action) {
 		action(evt);
@@ -1690,15 +2081,15 @@ void Tutorial::on_input(InputEvent const &evt) {
 					float dy = -(evt.motion.y - init_y) / rtg.swapchain_extent.height * height; // negated b/c glfw y-down coords
 
 					// compute cam transform to extract right and up
-					mat4 camera_from_world = orbit(
+					glm::mat4 camera_from_world = orbit(
 						init_camera.target_x, init_camera.target_y, init_camera.target_z,
 						init_camera.azimuth, init_camera.elevation, init_camera.radius
 					);
 
 					// move desired distance
-					user_camera.target_x = init_camera.target_x - dx * camera_from_world[0] - dy * camera_from_world[1];
-					user_camera.target_y = init_camera.target_y - dx * camera_from_world[4] - dy * camera_from_world[5];
-					user_camera.target_z = init_camera.target_z - dx * camera_from_world[8] - dy * camera_from_world[9];
+					user_camera.target_x = init_camera.target_x - dx * camera_from_world[0][0] - dy * camera_from_world[0][1];
+					user_camera.target_y = init_camera.target_y - dx * camera_from_world[1][0] - dy * camera_from_world[1][1];
+					user_camera.target_z = init_camera.target_z - dx * camera_from_world[2][0] - dy * camera_from_world[2][1];
 					return;
 				}
 			};

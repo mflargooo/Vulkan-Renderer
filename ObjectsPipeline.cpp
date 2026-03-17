@@ -1,4 +1,4 @@
-#include "Tutorial.hpp"
+#include "Viewer.hpp"
 
 #include "Helpers.hpp"
 #include "refsol.hpp"
@@ -12,7 +12,7 @@ static uint32_t frag_code[] =
 #include "spv/objects.frag.inl"
 ;
 
-void Tutorial::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_t subpass) {
+void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_t subpass) {
     VkShaderModule vert_module = rtg.helpers.create_shader_module(vert_code);
     VkShaderModule frag_module = rtg.helpers.create_shader_module(frag_code);
 
@@ -54,7 +54,26 @@ void Tutorial::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint3
         VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set1_Transforms))
     }
 
-    { // the set2_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader
+    { // the set2_Camera layout holds an array of Transform structures in a storage buffer used in the vertex shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_Camera) );
+    }
+
+    { // the set3_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
@@ -70,22 +89,121 @@ void Tutorial::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint3
             .pBindings = bindings.data(),
         };
 
-        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_TEXTURE) );
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_TEXTURE) );
+    }
+
+    { // the set4_ENV_MAP layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 3 > bindings{
+            VkDescriptorSetLayoutBinding{ // lambertian integrated
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            VkDescriptorSetLayoutBinding{ // prefiltered env
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            VkDescriptorSetLayoutBinding{ // lut values
+                .binding = 2,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set4_ENV_MAP) );
+    }
+
+    { // the set5_NORMAL_MAP layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set5_NORMAL_MAP) );
+    }
+
+    { // the set6_ROUGHNESS_MAP layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set6_ROUGHNESS_MAP) );
+    }
+
+    { // the set7_METALNESS_MAP layout has a single descriptor for a sampler2D used in the fragment shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set7_METALNESS_MAP) );
     }
 
     { // create pipeline layout
-        std::array< VkDescriptorSetLayout, 3 > layouts{
+        VkPushConstantRange range{
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .offset = 0,
+            .size = sizeof(Constants),
+        };
+
+        std::array< VkDescriptorSetLayout, 8 > layouts{
             set0_World,
             set1_Transforms,
-            set2_TEXTURE,
+            set2_Camera,
+            set3_TEXTURE,
+            set4_ENV_MAP,
+            set5_NORMAL_MAP,
+            set6_ROUGHNESS_MAP,
+            set7_METALNESS_MAP,
         };
 
         VkPipelineLayoutCreateInfo create_info{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = uint32_t(layouts.size()),
             .pSetLayouts = layouts.data(),
-            .pushConstantRangeCount = 0,
-            .pPushConstantRanges = nullptr,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &range,
         };
 
         VK( vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout) );
@@ -205,10 +323,35 @@ void Tutorial::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint3
 
 }
 
-void Tutorial::ObjectsPipeline::destroy(RTG &rtg) {
-    if (set2_TEXTURE != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(rtg.device, set2_TEXTURE, nullptr);
-        set2_TEXTURE = VK_NULL_HANDLE;
+void Viewer::ObjectsPipeline::destroy(RTG &rtg) {
+    if (set7_METALNESS_MAP != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set7_METALNESS_MAP, nullptr);
+        set7_METALNESS_MAP = VK_NULL_HANDLE;
+    }
+
+    if (set6_ROUGHNESS_MAP != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set6_ROUGHNESS_MAP, nullptr);
+        set6_ROUGHNESS_MAP = VK_NULL_HANDLE;
+    }
+
+    if (set5_NORMAL_MAP != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set5_NORMAL_MAP, nullptr);
+        set5_NORMAL_MAP = VK_NULL_HANDLE;
+    }
+
+    if (set4_ENV_MAP != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set4_ENV_MAP, nullptr);
+        set4_ENV_MAP = VK_NULL_HANDLE;
+    }
+
+    if (set3_TEXTURE != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set3_TEXTURE, nullptr);
+        set3_TEXTURE = VK_NULL_HANDLE;
+    }
+
+    if (set2_Camera != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set2_Camera, nullptr);
+        set2_Camera = VK_NULL_HANDLE;
     }
 
     if (set1_Transforms != VK_NULL_HANDLE) {

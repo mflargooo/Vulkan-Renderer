@@ -3,17 +3,16 @@
 #include "PosColVertex.hpp"
 #include "PosNorTexVertex.hpp"
 #include "PosNorTanTexVertex.hpp"
-#include "mat4.hpp"
 
 #include "RTG.hpp"
 
 #include <s72/S72.hpp>
 
-struct Tutorial : RTG::Application {
+struct Viewer : RTG::Application {
 
-	Tutorial(RTG &);
-	Tutorial(Tutorial const &) = delete; //you shouldn't be copying this object
-	~Tutorial();
+	Viewer(RTG &);
+	Viewer(Viewer const &) = delete; //you shouldn't be copying this object
+	~Viewer();
 
 	//kept for use in destructor:
 	RTG &rtg;
@@ -50,7 +49,7 @@ struct Tutorial : RTG::Application {
 
 		// types for descriptors
 		struct Camera {
-			mat4 CLIP_FROM_WORLD;
+			glm::mat4 CLIP_FROM_WORLD;
 		};
 		static_assert(sizeof(Camera) == 16*4, "camera buffer structure is packed.");
 
@@ -70,7 +69,12 @@ struct Tutorial : RTG::Application {
 		// descriptor set layouts
 		VkDescriptorSetLayout set0_World = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
-		VkDescriptorSetLayout set2_TEXTURE = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set2_Camera = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set3_TEXTURE = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set4_ENV_MAP = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set5_NORMAL_MAP = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set6_ROUGHNESS_MAP = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set7_METALNESS_MAP = VK_NULL_HANDLE;
 
 		// types for descriptors
 		struct World {
@@ -82,13 +86,21 @@ struct Tutorial : RTG::Application {
 		static_assert(sizeof(World) == 4*4 + 4*4 + 4*4 + 4*4, "World is the expected size.");
 		
 		struct Transform {
-			mat4 CLIP_FROM_LOCAL;
-			mat4 WORLD_FROM_LOCAL;
-			mat4 WORLD_FROM_LOCAL_NORMAL;
+			glm::mat4 CLIP_FROM_LOCAL;
+			glm::mat4 WORLD_FROM_LOCAL;
+			glm::mat4 WORLD_FROM_LOCAL_NORMAL;
 		};
 		static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4, "Transform is the expected size.");
 
-		// no push constants
+		struct Constants {
+			uint32_t material_type;
+			float exposure;
+			int32_t tonemap;
+			int32_t has_normal_map;
+			int32_t has_roughness_map;
+			int32_t has_metalness_map;
+			uint32_t mip_levels;
+		};
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
@@ -148,6 +160,15 @@ struct Tutorial : RTG::Application {
 	VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;
 	std::vector< VkDescriptorSet > texture_descriptors; // allocated from texture_descriptor_pool
 
+	uint32_t mip_levels = 0; // leverages at most 1 cubemap exists
+	std::vector< Helpers::AllocatedImage > env_maps;
+	std::vector< VkImageView > env_map_views;
+	std::vector< VkSampler > env_map_samplers;
+	VkDescriptorPool env_map_descriptor_pool = VK_NULL_HANDLE;
+	VkDescriptorSet env_map_descriptor = VK_NULL_HANDLE; // allocated from cubemap_descriptor_pool
+
+	// normal maps are stored in textures map
+
 	//--------------------------------------------------------------------
 	//Resources that change when the swapchain is resized:
 
@@ -180,8 +201,8 @@ struct Tutorial : RTG::Application {
 	struct OrbitCamera { // used when camera_mode == CameraMode::Free
 		float target_x = 0.f, target_y = 0.f, target_z = 0.f; // cam looking + orbiting
 		float radius = 2.f; // dist from cam to target
-		float azimuth = 0.f; // ccw angle around z between x and cam dir (rads)
-		float elevation = .25f * float(M_PI); // angle from xy plane to cam dir (rads)
+		float azimuth = -float(M_PI) / 2.0f; // ccw angle around z between x and cam dir (rads)
+		float elevation = 0.f; // angle from xy plane to cam dir (rads)
 
 		float fov = 60.f / 180.f * float(M_PI); // vfov (rad)
 		float near = .1f; // near clip
@@ -198,8 +219,8 @@ struct Tutorial : RTG::Application {
 	std::map< std::string, Camera > scene_cameras;
 	std::map< std::string, Camera >::iterator selected_scene_camera;
 	
-	mat4 debug_CLIP_FROM_WORLD;
-	mat4 CLIP_FROM_WORLD;
+	glm::mat4 debug_CLIP_FROM_WORLD;
+	glm::mat4 CLIP_FROM_WORLD;
 
 	std::vector< LinesPipeline::Vertex > lines_vertices;
 
@@ -213,11 +234,21 @@ struct Tutorial : RTG::Application {
 	};
 	std::unordered_map< Helpers::AllocatedBuffer *, AABB > aabbs;
 
+	struct Material {
+		uint32_t type = 0;
+		int32_t albedo_id = -1; // may not exists
+		int32_t normal_id = -1; // may not exist
+		int32_t displacement_id = -1; // may not exist
+		int32_t roughness_id = -1; // may not exist
+		int32_t metalness_id = -1; // may not exist
+	};
+	std::unordered_map< std::string, Material > materials;
+
 	struct ObjectInstance {
 		ObjectVertices vertices;
 		Helpers::AllocatedBuffer *buffer = nullptr;
 		ObjectsPipeline::Transform transform;
-		uint32_t texture = 0;
+		Material material;
 	};
 	std::vector< ObjectInstance > object_instances;
 
@@ -226,15 +257,9 @@ struct Tutorial : RTG::Application {
 	
 	std::unordered_map < Helpers::AllocatedBuffer *, std::vector < ObjectInstance * > > drawables;
 
-	// texture path -> tex_view id
+	// texture path -> *_view id
 	std::unordered_map< std::string, uint32_t > tex_ids;
-	
-	struct Material {
-		int albedo_id; // always exists
-		int normal_id; // may not exist
-		int displacement_id; // may not exist
-	};
-	std::unordered_map< std::string, Material > materials;
+	std::unordered_map< std::string, uint32_t > cubemap_ids;
 
 	int load_scene(const std::string &file);
 	void parse_scene_graph();
