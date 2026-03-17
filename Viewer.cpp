@@ -150,7 +150,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0, // omission of CREATE_FREE_DESCRIPTOR_SET_BIT, prevent individual descriptors allocated from this pool
-			.maxSets = 3 * per_workspace, // three sets per workspace
+			.maxSets = 4 * per_workspace, // three sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -228,6 +228,18 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			};
 
 			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Transforms_descriptors) );
+			// will fill in this descriptor set in render when buffers are [re-]allocated
+		}
+
+		{ // allocate descriptor set for Lights descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set8_Lights,
+			};
+
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors) );
 			// will fill in this descriptor set in render when buffers are [re-]allocated
 		}
 
@@ -651,6 +663,13 @@ Viewer::~Viewer() {
 		if(workspace.command_buffer != VK_NULL_HANDLE) {
 			vkFreeCommandBuffers(rtg.device, command_pool, 1, &workspace.command_buffer);
 			workspace.command_buffer = VK_NULL_HANDLE;
+		}
+
+		if (workspace.Lights_src.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Lights_src));
+		}
+		if (workspace.Lights.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Lights));
 		}
 
 		if (workspace.lines_vertices_src.handle != VK_NULL_HANDLE) {
@@ -1385,7 +1404,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				0, nullptr // descriptorCopies count, data
 			);
 
-			std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
+			std::cout << "Re-allocated transforms buffers to " << new_bytes << " bytes." << std::endl;
 		}
 		
 		assert(workspace.Transforms_src.size == workspace.Transforms.size);
@@ -1411,6 +1430,75 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	}
 
 	if (!lights.empty()) {
+		size_t needed_bytes = lights.size() * sizeof(ObjectsPipeline::Light);
+		if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Transforms_src.size < needed_bytes) {
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+			if (workspace.Lights_src.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.Lights_src));
+			}
+			if (workspace.Lights.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.Lights));
+			}
+
+			workspace.Lights_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+				Helpers::Mapped 
+			);
+			workspace.Lights = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buf, also going to have GPU into this mem
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+				Helpers::Unmapped 
+			);
+
+			VkDescriptorBufferInfo Lights_info{
+				.buffer = workspace.Lights.handle,
+				.offset = 0,
+				.range = workspace.Transforms.size,
+			};
+
+			std::array< VkWriteDescriptorSet, 1 > writes{
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Lights_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Lights_info,
+				},
+			};
+
+			vkUpdateDescriptorSets(
+				rtg.device,
+				uint32_t(writes.size()), writes.data(),
+				0, nullptr
+			);
+
+			std::cout << "Re-allocated lights buffers to " << new_bytes << " bytes." << std::endl;
+		}
+		
+		assert(workspace.Lights_src.size == workspace.Lights.size);
+		assert(workspace.Lights_src.size >= needed_bytes);
+
+		{
+			assert(workspace.Lights_src.allocation.mapped);
+			ObjectsPipeline::Light *out = reinterpret_cast< ObjectsPipeline::Light * >(workspace.Lights_src.allocation.data());
+			
+			for (auto const &[_, light] : lights) {
+				*out = light;
+				++out;
+			}
+		}
+
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = needed_bytes,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
 	}
 
 	{ // mem barrier to make sure copies complete before rendering happens
