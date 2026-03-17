@@ -1,8 +1,9 @@
 #version 450
 
 #include "tonemap.glsl"
+#include "lights.glsl"
 
-layout(set=0, binding=0,std140) uniform World {
+layout(set=0, binding=0, std140) uniform World {
     vec3 SKY_DIRECTION;
     vec3 SKY_ENERGY; // energy supplied by sky to a surface patch with normal = SKY_DIRECTION
     vec3 SUN_DIRECTION;

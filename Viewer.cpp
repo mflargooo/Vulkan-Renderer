@@ -1430,8 +1430,8 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	}
 
 	if (!lights.empty()) {
-		size_t needed_bytes = lights.size() * sizeof(ObjectsPipeline::Light);
-		if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Transforms_src.size < needed_bytes) {
+		size_t needed_bytes = lights.size() * sizeof(ObjectsPipeline::Light) + 16; // + 16 for the number of lights information
+		if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Lights_src.size < needed_bytes) {
 			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
 			if (workspace.Lights_src.handle) {
 				rtg.helpers.destroy_buffer(std::move(workspace.Lights_src));
@@ -1456,7 +1456,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			VkDescriptorBufferInfo Lights_info{
 				.buffer = workspace.Lights.handle,
 				.offset = 0,
-				.range = workspace.Transforms.size,
+				.range = workspace.Lights.size,
 			};
 
 			std::array< VkWriteDescriptorSet, 1 > writes{
@@ -1485,7 +1485,9 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		{
 			assert(workspace.Lights_src.allocation.mapped);
-			ObjectsPipeline::Light *out = reinterpret_cast< ObjectsPipeline::Light * >(workspace.Lights_src.allocation.data());
+			uint32_t num_lights = (uint32_t)lights.size();
+			memcpy(workspace.Lights_src.allocation.data(), &num_lights, sizeof(uint32_t));
+			ObjectsPipeline::Light *out = reinterpret_cast< ObjectsPipeline::Light * >((char *)(workspace.Lights_src.allocation.data()) + 16);
 			
 			for (auto const &[_, light] : lights) {
 				*out = light;

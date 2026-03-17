@@ -100,7 +100,7 @@ struct Viewer : RTG::Application {
 			float radius;
 			float blend;
 			float fov;
-			int32_t type;
+			uint32_t type;
 
 			static void pack_light(Light &light, S72::Light &s72_light);
 		};
