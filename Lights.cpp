@@ -14,8 +14,8 @@ void Viewer::ObjectsPipeline::Light::pack_light(Viewer::ObjectsPipeline::Light &
         light.type = 1;
     } else if (auto p_spot = std::get_if< S72::Light::Spot >(&s72_light.source)) {
         light.radiance = s72_light.tint * p_spot->power;
-        light.blend = p_spot->blend;
-        light.fov = p_spot->fov;
+        light.cos_inner = std::cosf(p_spot->fov * .5f * (1.f - p_spot->blend));
+        light.cos_outer = std::cosf(p_spot->fov * .5f);
         light.attenuation = std::isinf(p_spot->limit) ? 0.f : 1.f / (p_spot->limit * p_spot->limit);
         light.radius = p_spot->radius;
         light.type = 2;

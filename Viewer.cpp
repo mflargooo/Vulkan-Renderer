@@ -1639,6 +1639,17 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				);
 			}
 
+			{ // bind lights
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					8, // eighth set
+					1, &workspace.Lights_descriptors, // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+			}
+
 			// cam descriptor set still bound but unused
 
 			// draw all instances

@@ -56,12 +56,11 @@ void main() {
     if (pc.type == 0) { // LAMBERTIAN
         vec3 albedo = texture(TEXTURE, texCoord).rgb;
 
-        // hemi sky + directional sun
-        vec3 e = SKY_ENERGY * (0.5 * dot(n,SKY_DIRECTION) + 0.5)
-            + SUN_ENERGY * max(0.0, dot(n, SUN_DIRECTION));
+        vec3 e = forward_pass(position, n, vec3(0.0), 0.0, vec3(0.0));
 
         vec3 env_lighting = texture(IRRADIANCE, n).rgb;
         base_color = albedo * (e + env_lighting);
+        base_color = e;
     } else if (pc.type == 1) { // MIRROR
         mat4 WORLD_FROM_CLIP = inverse(CLIP_FROM_WORLD);
         vec4 eye = WORLD_FROM_CLIP * vec4(0.0, 0.0, 0.0, 1.0);

@@ -98,8 +98,8 @@ struct Viewer : RTG::Application {
 			glm::vec3 radiance;
 			float attenuation;
 			float radius;
-			float blend;
-			float fov;
+			float cos_outer;
+			float cos_inner;
 			uint32_t type;
 
 			static void pack_light(Light &light, S72::Light &s72_light);

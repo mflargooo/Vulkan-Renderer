@@ -60,11 +60,11 @@ const lines_shaders = [
 ];
 main_objs.push( maek.CPP('LinesPipeline.cpp', undefined, { depends:[...lines_shaders] } ) );
 
-const tonemap_includes = ['tonemap.glsl'];
+const shader_includes = ['tonemap.glsl', 'lights.glsl'];
 //uncomment to build objects shaders and pipeline:
 const objects_shaders = [
 	maek.GLSLC('objects.vert'),
-	maek.GLSLC('objects.frag', undefined, { depends:[...tonemap_includes] }),
+	maek.GLSLC('objects.frag', undefined, { depends:[...shader_includes] }),
 ];
 main_objs.push( maek.CPP('ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
@@ -219,7 +219,7 @@ function custom_flags_and_rules() {
 			await maek.run(command, `${task.label}: compile`,
 				async () => {
 					return {
-						read:[glslFile],
+						read:[glslFile, ...options.depends],
 						written:[spirvFile]
 					};
 				}
