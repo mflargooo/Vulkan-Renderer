@@ -60,7 +60,7 @@ void main() {
 
         vec3 env_lighting = texture(IRRADIANCE, n).rgb;
         base_color = albedo * (e + env_lighting);
-        base_color = e;
+        base_color = albedo * e;
     } else if (pc.type == 1) { // MIRROR
         mat4 WORLD_FROM_CLIP = inverse(CLIP_FROM_WORLD);
         vec4 eye = WORLD_FROM_CLIP * vec4(0.0, 0.0, 0.0, 1.0);

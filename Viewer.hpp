@@ -95,8 +95,8 @@ struct Viewer : RTG::Application {
 
 		struct Light { // light structure for all light types
 			glm::mat4 WORLD_FROM_LIGHT;
-			glm::vec3 radiance;
-			float attenuation;
+			glm::vec3 energy;
+			float limit_inv;
 			float radius;
 			float cos_outer;
 			float cos_inner;
