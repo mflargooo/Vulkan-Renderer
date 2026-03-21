@@ -34,9 +34,9 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
 
     } else if (light.type == 1) { // SPHERE
         vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;
-        vec3 light_dir = light_pos - position;
-        vec3 L = normalize(light_dir);
-        float d = length(light_dir);
+        vec3 to_light = light_pos - position;
+        vec3 L = normalize(to_light);
+        float d = length(to_light);
         float r = max(.001, light.radius);
 
         float mdr = max(d, r);
@@ -53,9 +53,9 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
         
     } else if (light.type == 2) { // SPOT
         vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;
-        vec3 light_dir = light_pos - position;
-        vec3 L = normalize(light_dir);
-        float d = length(light_dir);
+        vec3 to_light = light_pos - position;
+        vec3 L = normalize(to_light);
+        float d = length(to_light);
         float r = max(.001, light.radius);
 
         float mdr = max(d, r);
@@ -122,9 +122,109 @@ vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 vie
         float G_smith_prime = G_1(NoR, k) * G_1(NoV, k);
         return w * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
     } else if (light.type == 1) { // SPHERE
+        vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;  
+        vec3 to_light = light_pos - position;
+        vec3 L = normalize(to_light);
 
+        float d = length(to_light);
+        float r = max(.001, light.radius);
+
+        // per epics notes
+        vec3 R = reflect(-view, normal);
+        vec3 center_to_ray = dot(to_light, R) * R - to_light; 
+        vec3 closest_point = to_light + center_to_ray * clamp( r / length(center_to_ray), 0.0, 1.0 );
+
+        R = normalize(closest_point);
+
+        float NoR = dot(normal, R);
+        if (NoR <= 0.0) return vec3(0.0);
+        
+        float mdr = max(d, r);
+        float nonphysical_falloff = max(0.0, 1.0 - pow(d * light.limit_inv, 4.0));
+        float physical_falloff = 1 / (4.0 * 3.141592653589 * mdr * mdr);
+
+        float sin_ha = (d <= r ? 1.0 : r / d);
+        float NoL = dot(normal, L);
+
+        float attenuation = physical_falloff * nonphysical_falloff;
+
+        vec3 h = normalize(view + R);
+        float NoV = dot(normal, view);
+        float NoH = dot(normal, h);
+        float VoH = dot(view, h);
+
+        float OneMinusVoH = 1.0 - VoH;
+        float Fc = OneMinusVoH * OneMinusVoH * OneMinusVoH * OneMinusVoH * OneMinusVoH;
+        vec3 F = tint + (1.0 - tint) * Fc;
+
+        float a = roughness * roughness;
+        float a_prime = clamp(a + sin_ha * .5, 0.0, 1.0);
+        float norm = a / a_prime;
+        norm *= norm;
+
+        float a2_prime = a_prime * a_prime;
+        float c = (NoH * NoH * (a2_prime - 1.0) + 1.0);
+        float D_prime = a2_prime / (3.14159265359 * c * c);
+
+        float w = horizon_approx(NoL, sin_ha);
+
+        float k = a2_prime * 0.5;
+        float G_smith_prime = G_1(NoR, k) * G_1(NoV, k);
+        return w * attenuation * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
     } else if (light.type == 2) { // SPOT
+vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;  
+        vec3 to_light = light_pos - position;
+        vec3 L = normalize(to_light);
 
+        float d = length(to_light);
+        float r = max(.001, light.radius);
+
+        // per epics notes
+        vec3 R = reflect(-view, normal);
+        vec3 center_to_ray = dot(to_light, R) * R - to_light; 
+        vec3 closest_point = to_light + center_to_ray * clamp( r / length(center_to_ray), 0.0, 1.0 );
+
+        R = normalize(closest_point);
+
+        float NoR = dot(normal, R);
+        if (NoR <= 0.0) return vec3(0.0);
+        
+        float mdr = max(d, r);
+        float nonphysical_falloff = max(0.0, 1.0 - pow(d * light.limit_inv, 4.0));
+        float physical_falloff = 1 / (4.0 * 3.141592653589 * mdr * mdr);
+
+        float sin_ha = (d <= r ? 1.0 : r / d);
+        float NoL = dot(normal, L);
+
+        vec3 light_look_dir = normalize(light.WORLD_FROM_LIGHT[2].xyz);
+        float cos_theta = dot(L, light_look_dir);
+        float spot_blend = clamp((cos_theta - light.cos_outer) / (light.cos_inner - light.cos_outer), 0.0, 1.0);
+
+        float attenuation = physical_falloff * nonphysical_falloff * spot_blend;
+
+        vec3 h = normalize(view + R);
+        float NoV = dot(normal, view);
+        float NoH = dot(normal, h);
+        float VoH = dot(view, h);
+
+        float OneMinusVoH = 1.0 - VoH;
+        float Fc = OneMinusVoH * OneMinusVoH * OneMinusVoH * OneMinusVoH * OneMinusVoH;
+        vec3 F = tint + (1.0 - tint) * Fc;
+
+        float a = roughness * roughness;
+        float a_prime = clamp(a + sin_ha * .5, 0.0, 1.0);
+        float norm = a / a_prime;
+        norm *= norm;
+
+        float a2_prime = a_prime * a_prime;
+        float c = (NoH * NoH * (a2_prime - 1.0) + 1.0);
+        float D_prime = a2_prime / (3.14159265359 * c * c);
+
+        float w = horizon_approx(NoL, sin_ha);
+
+        float k = a2_prime * 0.5;
+        float G_smith_prime = G_1(NoR, k) * G_1(NoV, k);
+        return w * attenuation * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
     }
 
     return vec3(1.0, 0.0, 1.0);
