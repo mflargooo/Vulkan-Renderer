@@ -33,18 +33,18 @@ vec3 importance_sample_ggx(vec2 xi, float roughness, vec3 normal) {
 
 // specular ibl and related functions -- reference s72-viewer
 
-highp float G_1(highp float NoX, highp float k) {
+float G_1(float NoX, float k) {
     return NoX / (NoX * (1.0 - k) + k);
 }
 
-highp float G_smith(highp float roughness, highp float NoV, highp float NoL) {
-	highp float k = roughness * roughness / 2.0;
+float G_smith(float roughness, float NoV, float NoL) {
+	float k = roughness * roughness / 2.0;
 	return G_1(NoL, k) * G_1(NoV, k);
 }
 
-highp float D(highp float roughness, highp float NoH) {
-    highp float a = roughness * roughness;
-    highp float a2 = a * a;
-    highp float c = (NoH * NoH * (a2 - 1.0) + 1.0);
+float D(float roughness, float NoH) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float c = (NoH * NoH * (a2 - 1.0) + 1.0);
     return a2 / (3.141592653589 * c * c);
 }

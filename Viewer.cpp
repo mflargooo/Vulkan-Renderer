@@ -474,124 +474,126 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// the lambertian prefiltered.
 
 	// make cubemap views 0 - lambertian, 1 - mirror, 2 - env, 3 - pbr
-	{ // make image views for the env_maps
-		env_map_views.reserve(3);
-		// lambertian
+	if (!env_maps.empty()) {
+		{ // make image views for the env_maps
+			env_map_views.reserve(3);
+			// lambertian
 
-		struct EnvMapView {
-			VkImageViewType type;
-			Helpers::AllocatedImage *image = nullptr;
-			uint32_t level_count = 1;
-		} view_infos[3] = { 
-			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
-			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = mip_levels }, // pbr
-			{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
-		};
+			struct EnvMapView {
+				VkImageViewType type;
+				Helpers::AllocatedImage *image = nullptr;
+				uint32_t level_count = 1;
+			} view_infos[3] = { 
+				{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
+				{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = mip_levels }, // pbr
+				{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
+			};
 
-		for (EnvMapView &info : view_infos) {
-			VkImageViewCreateInfo create_info{
-				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			for (EnvMapView &info : view_infos) {
+				VkImageViewCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.flags = 0,
+					.image = info.image->handle,
+					.viewType = info.type,
+					.format = info.image->format,
+					// .components sets swizzling and is fine when zero inited
+					.subresourceRange{
+						.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+						.baseMipLevel = 0,
+						.levelCount = info.level_count,
+						.baseArrayLayer = 0,
+						.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
+					},
+				};
+
+				VkImageView image_view = VK_NULL_HANDLE;
+				VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
+
+				env_map_views.emplace_back(image_view);
+			}
+		}
+
+		for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels, 0 }) { // make a sampler for the env_maps
+			env_map_samplers.emplace_back(VK_NULL_HANDLE);
+			VkSamplerCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 				.flags = 0,
-				.image = info.image->handle,
-				.viewType = info.type,
-				.format = info.image->format,
-				// .components sets swizzling and is fine when zero inited
-				.subresourceRange{
-					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-					.baseMipLevel = 0,
-					.levelCount = info.level_count,
-					.baseArrayLayer = 0,
-					.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
+				.magFilter = VK_FILTER_LINEAR,
+				.minFilter = VK_FILTER_LINEAR,
+				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+				.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+				.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+				.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+				.mipLodBias = 0.f,
+				.anisotropyEnable  = VK_FALSE,
+				.maxAnisotropy = 0.f,
+				.compareEnable = VK_FALSE,
+				.compareOp = VK_COMPARE_OP_ALWAYS,
+				.minLod = 0.f,
+				.maxLod = float(level_count),
+				.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+				.unnormalizedCoordinates = VK_FALSE,
+			};
+			VK( vkCreateSampler(rtg.device, &create_info, nullptr, &env_map_samplers.back()) );
+		}
+
+		{ // create the cubemap descriptor pool
+			uint32_t per_cubemap_view = uint32_t(env_map_views.size()); // for easier to read counting
+
+			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.descriptorCount = 1 * 1 * per_cubemap_view, // one desc per set, on set per tex
 				},
 			};
 
-			VkImageView image_view = VK_NULL_HANDLE;
-			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
-
-			env_map_views.emplace_back(image_view);
-		}
-	}
-
-	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels, 0 }) { // make a sampler for the env_maps
-		env_map_samplers.emplace_back(VK_NULL_HANDLE);
-		VkSamplerCreateInfo create_info{
-			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-			.flags = 0,
-			.magFilter = VK_FILTER_LINEAR,
-			.minFilter = VK_FILTER_LINEAR,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.mipLodBias = 0.f,
-			.anisotropyEnable  = VK_FALSE,
-			.maxAnisotropy = 0.f,
-			.compareEnable = VK_FALSE,
-			.compareOp = VK_COMPARE_OP_ALWAYS,
-			.minLod = 0.f,
-			.maxLod = float(level_count),
-			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-			.unnormalizedCoordinates = VK_FALSE,
-		};
-		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &env_map_samplers.back()) );
-	}
-
-	{ // create the cubemap descriptor pool
-		uint32_t per_cubemap_view = uint32_t(env_map_views.size()); // for easier to read counting
-
-		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
-			VkDescriptorPoolSize{
-				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 1 * 1 * per_cubemap_view, // one desc per set, on set per tex
-			},
-		};
-
-		VkDescriptorPoolCreateInfo create_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-			.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-			.maxSets = 1 * per_cubemap_view, // one set per texture
-			.poolSizeCount = uint32_t(pool_sizes.size()),
-			.pPoolSizes = pool_sizes.data(),
-		};
-
-		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &env_map_descriptor_pool) );
-	}
-
-	{ // allocate and write the cubemap descriptor sets
-		// allocate the descriptors (using same alloc_info)
-		VkDescriptorSetAllocateInfo alloc_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = env_map_descriptor_pool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set4_ENV_MAP,
-		};
-		env_map_descriptor = VK_NULL_HANDLE;
-		VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &env_map_descriptor) );
-
-		// write descriptor for env_maps
-		std::vector< VkDescriptorImageInfo > infos(env_map_views.size());
-		std::vector< VkWriteDescriptorSet > writes(env_map_views.size());
-
-		for (auto const &cubemap_view : env_map_views) {
-			size_t i = &cubemap_view - &env_map_views[0];
-
-			infos[i] = VkDescriptorImageInfo{
-				.sampler = env_map_samplers[i],
-				.imageView = cubemap_view,
-				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VkDescriptorPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+				.maxSets = 1 * per_cubemap_view, // one set per texture
+				.poolSizeCount = uint32_t(pool_sizes.size()),
+				.pPoolSizes = pool_sizes.data(),
 			};
-			writes[i] = VkWriteDescriptorSet{
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = env_map_descriptor,
-				.dstBinding = (uint32_t)i,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.pImageInfo = &infos[i],
-			};
+
+			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &env_map_descriptor_pool) );
 		}
 
-		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
+		{ // allocate and write the cubemap descriptor sets
+			// allocate the descriptors (using same alloc_info)
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = env_map_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set4_ENV_MAP,
+			};
+			env_map_descriptor = VK_NULL_HANDLE;
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &env_map_descriptor) );
+
+			// write descriptor for env_maps
+			std::vector< VkDescriptorImageInfo > infos(env_map_views.size());
+			std::vector< VkWriteDescriptorSet > writes(env_map_views.size());
+
+			for (auto const &cubemap_view : env_map_views) {
+				size_t i = &cubemap_view - &env_map_views[0];
+
+				infos[i] = VkDescriptorImageInfo{
+					.sampler = env_map_samplers[i],
+					.imageView = cubemap_view,
+					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				};
+				writes[i] = VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = env_map_descriptor,
+					.dstBinding = (uint32_t)i,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &infos[i],
+				};
+			}
+
+			vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
+		}
 	}
 }
 

@@ -52,15 +52,17 @@ void main() {
         n = normalize(xf * ns);
     }
 
+    vec3 direct_diffuse, direct_specular;
+
     vec3 base_color = vec3(0.0);
     if (pc.type == 0) { // LAMBERTIAN
         vec3 albedo = texture(TEXTURE, texCoord).rgb;
 
-        vec3 e = forward_pass(position, n, vec3(0.0), 0.0, vec3(0.0));
+        forward_pass(position, n, vec3(0.0), 0.0, vec3(0.0), direct_diffuse, direct_specular);
 
         vec3 env_lighting = texture(IRRADIANCE, n).rgb;
-        base_color = albedo * (e + env_lighting);
-        base_color = albedo * e;
+        base_color = albedo * (direct_diffuse + env_lighting);
+        
     } else if (pc.type == 1) { // MIRROR
         mat4 WORLD_FROM_CLIP = inverse(CLIP_FROM_WORLD);
         vec4 eye = WORLD_FROM_CLIP * vec4(0.0, 0.0, 0.0, 1.0);
@@ -97,14 +99,20 @@ void main() {
         // referenced from s72-viewer
         vec3 specular_tint = mix(vec3(.04), albedo, metalness);
 
+        forward_pass(position, n, to_eye, roughness, specular_tint, direct_diffuse, direct_specular);
+
         vec3 specular_color = prefilter_col * (specular_tint * brdf_val.x + brdf_val.y);
         vec3 irradiance = texture(IRRADIANCE, n).rgb;
 
         float OneMinusNoV = 1.0 - NoV;
         float Fc = OneMinusNoV * OneMinusNoV * OneMinusNoV * OneMinusNoV * OneMinusNoV;
         vec3 F = specular_tint + (1.0 - specular_tint) * Fc;
-        vec3 diff_albedo = mix(albedo, vec3(0.0), metalness) * irradiance;
-        base_color = specular_color + diff_albedo;
+        vec3 diffuse_factor = mix(albedo, vec3(0.0), metalness);
+        base_color = 
+            specular_color 
+            + direct_specular 
+            + (1.0 - F) * diffuse_factor * irradiance 
+            + (1.0 - F) * diffuse_factor * direct_diffuse;
     }
 
     vec3 radiance = min(base_color * exp2(pc.exposure), vec3(1e4)); // avoiding nans and infs
