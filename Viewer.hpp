@@ -271,6 +271,8 @@ struct Viewer : RTG::Application {
 	};
 	std::vector< ObjectInstance > object_instances;
 
+	std::vector< ObjectsPipeline::Light > light_instances;
+
 	// DataFile path -> buffer holding data obtained from DataFile path
 	std::unordered_map< std::string, Helpers::AllocatedBuffer > scene_vertices;
 	

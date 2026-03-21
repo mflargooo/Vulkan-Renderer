@@ -1177,6 +1177,7 @@ int Viewer::load_scene(const std::string &filename) {
 
 void Viewer::parse_scene_graph() { // populate all object instances
 	object_instances.clear();
+	light_instances.clear();
 
 	struct Element {
 		S72::Node *node;
@@ -1243,8 +1244,9 @@ void Viewer::parse_scene_graph() { // populate all object instances
 				};
 			}
 		} else if (node->light) {
-			ObjectsPipeline::Light &light = lights[node->light->name];
-			ObjectsPipeline::Light::pack_light(light, *(node->light));
+			light_instances.emplace_back();
+			ObjectsPipeline::Light &light = light_instances.back();
+			light = lights[node->light->name];
 			light.WORLD_FROM_LIGHT = xf;
 		}
 	}
@@ -1431,8 +1433,8 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
 	}
 
-	if (!lights.empty()) {
-		size_t needed_bytes = lights.size() * sizeof(ObjectsPipeline::Light) + 16; // + 16 for the number of lights information
+	if (!light_instances.empty()) {
+		size_t needed_bytes = light_instances.size() * sizeof(ObjectsPipeline::Light) + 16; // + 16 for the number of lights information
 		if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Lights_src.size < needed_bytes) {
 			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
 			if (workspace.Lights_src.handle) {
@@ -1487,11 +1489,11 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		{
 			assert(workspace.Lights_src.allocation.mapped);
-			uint32_t num_lights = (uint32_t)lights.size();
+			uint32_t num_lights = (uint32_t)light_instances.size();
 			memcpy(workspace.Lights_src.allocation.data(), &num_lights, sizeof(uint32_t));
 			ObjectsPipeline::Light *out = reinterpret_cast< ObjectsPipeline::Light * >((char *)(workspace.Lights_src.allocation.data()) + 16);
 			
-			for (auto const &[_, light] : lights) {
+			for (auto const &light : light_instances) {
 				*out = light;
 				++out;
 			}

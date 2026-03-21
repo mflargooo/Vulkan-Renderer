@@ -67,7 +67,13 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
 
         vec3 light_look_dir = normalize(light.WORLD_FROM_LIGHT[2].xyz);
         float cos_theta = dot(L, light_look_dir);
-        float spot_blend = clamp((cos_theta - light.cos_outer) / (light.cos_inner - light.cos_outer), 0.0, 1.0);
+        float spot_blend = 0.0;
+        if (abs(light.cos_inner - light.cos_outer) < .0001) {
+            spot_blend = cos_theta >= light.cos_outer ? 1.0 : 0.0;
+        } else { 
+            spot_blend = clamp((cos_theta - light.cos_outer) / (light.cos_inner - light.cos_outer), 0.0, 1.0);
+        }
+
 
         float attenuation = physical_falloff * nonphysical_falloff * spot_blend;
 
@@ -198,7 +204,13 @@ vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;
 
         vec3 light_look_dir = normalize(light.WORLD_FROM_LIGHT[2].xyz);
         float cos_theta = dot(L, light_look_dir);
-        float spot_blend = clamp((cos_theta - light.cos_outer) / (light.cos_inner - light.cos_outer), 0.0, 1.0);
+
+        float spot_blend = 0.0;
+        if (abs(light.cos_inner - light.cos_outer) < .00001) {
+            spot_blend = cos_theta >= light.cos_outer ? 1.0 : 0.0;
+        } else { 
+            spot_blend = clamp((cos_theta - light.cos_outer) / (light.cos_inner - light.cos_outer), 0.0, 1.0);
+        }
 
         float attenuation = physical_falloff * nonphysical_falloff * spot_blend;
 
