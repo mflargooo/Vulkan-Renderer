@@ -42,13 +42,16 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
         float mdr = max(d, r);
         float nonphysical_falloff = max(0.0, 1.0 - pow(d * light.limit_inv, 4.0));
         float physical_falloff = 1 / (4.0 * 3.141592653589 * mdr * mdr);
-
+        
         float sin_ha = (d <= r ? 1.0 : r / d);
         float NoL = dot(normal, L);
 
         float attenuation = physical_falloff * nonphysical_falloff;
 
         float w = horizon_approx(NoL, sin_ha);
+        if (d < r) {
+            w = 1.0;
+        }
         return w * attenuation * light.energy / 3.141592653589;
         
     } else if (light.type == 2) { // SPOT
@@ -78,6 +81,9 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
         float attenuation = physical_falloff * nonphysical_falloff * spot_blend;
 
         float w = horizon_approx(NoL, sin_ha);
+        if (d < r) {
+            w = 1.0;
+        }
         return w * attenuation * light.energy / 3.141592653589;
     }
 
@@ -120,12 +126,13 @@ vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 vie
 
         float a2_prime = a_prime * a_prime;
         float c = (NoH * NoH * (a2_prime - 1.0) + 1.0);
-        float D_prime = a2_prime / (3.14159265359 * c * c);
+        float D_prime = a2_prime / (3.141592653589 * c * c);
 
         float w = horizon_approx(NoL, sin_ha);
 
         float k = a2_prime * 0.5;
         float G_smith_prime = G_1(NoR, k) * G_1(NoV, k);
+        
         return w * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
     } else if (light.type == 1) { // SPHERE
         vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;  
@@ -170,15 +177,18 @@ vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 vie
 
         float a2_prime = a_prime * a_prime;
         float c = (NoH * NoH * (a2_prime - 1.0) + 1.0);
-        float D_prime = a2_prime / (3.14159265359 * c * c);
-
-        float w = horizon_approx(NoL, sin_ha);
+        float D_prime = a2_prime / (3.141592653589 * c * c);
 
         float k = a2_prime * 0.5;
         float G_smith_prime = G_1(NoR, k) * G_1(NoV, k);
+
+        float w = horizon_approx(NoL, sin_ha);
+        if (d < r) {
+            w = 1.0;
+        }
         return w * attenuation * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
     } else if (light.type == 2) { // SPOT
-vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;  
+        vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;  
         vec3 to_light = light_pos - position;
         vec3 L = normalize(to_light);
 
@@ -230,12 +240,17 @@ vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;
 
         float a2_prime = a_prime * a_prime;
         float c = (NoH * NoH * (a2_prime - 1.0) + 1.0);
-        float D_prime = a2_prime / (3.14159265359 * c * c);
+        float D_prime = a2_prime / (3.141592653589 * c * c);
 
-        float w = horizon_approx(NoL, sin_ha);
 
         float k = a2_prime * 0.5;
         float G_smith_prime = G_1(NoR, k) * G_1(NoV, k);
+
+        float w = horizon_approx(NoL, sin_ha);
+        if (d < r) {
+            w = 1.0;
+        }
+
         return w * attenuation * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
     }
 
