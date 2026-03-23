@@ -32,7 +32,7 @@ void Viewer::ShadowPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_t
 
     { // create pipeline layout
         VkPushConstantRange range{
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
             .offset = 0,
             .size = sizeof(Constants),
         };

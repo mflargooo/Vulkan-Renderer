@@ -199,7 +199,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set8_Lights) );
     }
 
-    { // the set9_Shadows layout holds an array of Light structures in a storage buffer used in the vertex shader
+    { // the set9_Shadows layout holds an array of shadow maps in a storage buffer used in the vertex shader
         std::array< VkDescriptorSetLayoutBinding, 1 > bindings {
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
@@ -215,7 +215,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             .pBindings = bindings.data(),
         };
 
-        VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set8_Lights) );
+        VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set9_Shadows) );
     }
 
     { // create pipeline layout
@@ -364,6 +364,11 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
 }
 
 void Viewer::ObjectsPipeline::destroy(RTG &rtg) {
+    if (set9_Shadows != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set9_Shadows, nullptr);
+        set9_Shadows = VK_NULL_HANDLE;
+    }
+
     if (set8_Lights != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(rtg.device, set8_Lights, nullptr);
         set8_Lights = VK_NULL_HANDLE;

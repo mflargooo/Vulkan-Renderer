@@ -40,6 +40,47 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
 	);
 
+	{ // create shadow render pass
+		// attachments
+		std::array< VkAttachmentDescription, 1 > attachments{
+			VkAttachmentDescription{ // 1 - depth
+				.format = depth_format,
+				.samples = VK_SAMPLE_COUNT_1_BIT,
+				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+				.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			},
+		};
+
+		// subpass
+		VkAttachmentReference depth_attachment_ref{
+			.attachment = 0,
+			.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		};
+
+		VkSubpassDescription subpass{
+			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.inputAttachmentCount = 0,
+			.pInputAttachments = nullptr,
+			.colorAttachmentCount = 0,
+			.pColorAttachments = nullptr,
+			.pDepthStencilAttachment = &depth_attachment_ref,
+		};
+
+		VkRenderPassCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+			.attachmentCount = uint32_t(attachments.size()),
+			.pAttachments = attachments.data(),
+			.subpassCount = 1,
+			.pSubpasses = &subpass,
+		};
+
+		VK( vkCreateRenderPass(rtg.device, &create_info, nullptr, &shadow_render_pass) );
+	}
+
 	{ // create render pass
 		// attachments
 		std::array< VkAttachmentDescription, 2 > attachments{
@@ -241,7 +282,6 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			};
 
 			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors) );
-			// will fill in this descriptor set in render when buffers are [re-]allocated
 		}
 
 		{ // point descriptor to camera buffer
@@ -595,6 +635,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 		}
+
 	}
 }
 
@@ -1575,10 +1616,10 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		}
 		shadow_map_views.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
 
-		vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
+		if (shadow_map_sampler != VK_NULL_HANDLE)vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
 		shadow_map_sampler = VK_NULL_HANDLE;
 
-		vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
+		if (shadow_map_descriptor_pool != VK_NULL_HANDLE) vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
 		shadow_map_descriptors.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
 
 		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) { // image view
@@ -1637,7 +1678,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			VkDescriptorPoolCreateInfo create_info{
 				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-				.maxSets = 1 * per_shadow, // one set per texture
+				.maxSets = 1, // one set
 				.poolSizeCount = uint32_t(pool_sizes.size()),
 				.pPoolSizes = pool_sizes.data(),
 			};
@@ -1697,23 +1738,6 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				VK( vkCreateFramebuffer(rtg.device, &create_info, nullptr, &shadow_map_fbs[i]) );
 			}
 		}
-	}
-
-	{ // mem barrier to make sure copies complete before rendering happens
-		VkMemoryBarrier memory_barrier{
-			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-		};
-
-		vkCmdPipelineBarrier( workspace.command_buffer, 
-			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT , // srcStageMask
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // dstStageMask
-			0, // dependencyFlags
-			1, &memory_barrier, // memoryBarriers (count, data)
-			0, nullptr, // bufferMemoryBarriers (count, data)
-			0, nullptr // imageMemoryBarriers (count, data)
-		);
 	}
 
 	{ // shadow pass (depth only)
@@ -1808,19 +1832,35 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	}
 
 	{ // mem barrier to make sure copies complete before rendering happens
-		VkMemoryBarrier memory_barrier{
-			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
-		};
+		std::vector< VkImageMemoryBarrier > memory_barriers(shadow_map_instances.size());
+		
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+				memory_barriers[i] = {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+				.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+				.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.image = shadow_map_instances[i].handle,
+				.subresourceRange = { 
+					VK_IMAGE_ASPECT_DEPTH_BIT, 
+					0, 
+					1, 
+					0, 
+					1 
+				}
+			};
+		}
 
 		vkCmdPipelineBarrier( workspace.command_buffer, 
-			VK_PIPELINE_STAGE_TRANSFER_BIT, // srcStageMask
-			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, // dstStageMask
+			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, // srcStageMask
+			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // dstStageMask
 			0, // dependencyFlags
-			1, &memory_barrier, // memoryBarriers (count, data)
+			0, nullptr, // memoryBarriers (count, data)
 			0, nullptr, // bufferMemoryBarriers (count, data)
-			0, nullptr // imageMemoryBarriers (count, data)
+			(uint32_t)memory_barriers.size(), memory_barriers.data() // imageMemoryBarriers (count, data)
 		);
 	}
 
@@ -1950,6 +1990,17 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					objects_pipeline.layout, // pipeline layout
 					8, // eighth set
 					1, &workspace.Lights_descriptors, // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+			}
+
+			{ // bind shadow maps
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					9, // ninth set
+					uint32_t(shadow_map_descriptors.size()), shadow_map_descriptors.data(), // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 			}
