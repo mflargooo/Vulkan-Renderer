@@ -5,13 +5,16 @@ struct Light {
     float radius;
     float cos_outer;
     float cos_inner;
-    uint type;
-    uint shadow;
+    uint flags;
 };
 
 layout(set=8, binding=0, std430) readonly buffer Lights {
     uint num_lights, _padding0, _padding1, _padding2;
     Light LIGHTS[];
+};
+
+layout(set=9, binding=0, std430) readonly buffer Shadows {
+    sampler2D SHADOWS[];
 };
 
 // heavily inspired from s72-viewer https://github.com/15-472/s72/blob/main/viewer/s72-viewer.mjs
@@ -24,7 +27,9 @@ float horizon_approx(float NoL, float sin_ha) {
 }
 
 vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
-    if (light.type == 0) { // SUN
+    uint type = light.flags & 3;
+
+    if (type == 0) { // SUN
         vec3 L = normalize(light.WORLD_FROM_LIGHT[2].xyz);        
         float NoL = dot(normal, L);
         float half_angle = light.radius * 0.5;
@@ -33,7 +38,7 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
         float w = horizon_approx(NoL, sin_ha);
         return w * light.energy / 3.141592653589;
 
-    } else if (light.type == 1) { // SPHERE
+    } else if (type == 1) { // SPHERE
         vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;
         vec3 to_light = light_pos - position;
         vec3 L = normalize(to_light);
@@ -55,7 +60,7 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
         }
         return w * attenuation * light.energy / 3.141592653589;
         
-    } else if (light.type == 2) { // SPOT
+    } else if (type == 2) { // SPOT
         vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;
         vec3 to_light = light_pos - position;
         vec3 L = normalize(to_light);
@@ -93,7 +98,9 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
 #include "ggx.glsl"
 
 vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 view, float roughness, vec3 tint) {
-    if (light.type == 0) { // SUN
+    uint type = light.flags & 3;
+    
+    if (type == 0) { // SUN
         vec3 L = normalize(light.WORLD_FROM_LIGHT[2].xyz);        
         float NoL = dot(normal, L);
         float half_angle = light.radius * 0.5;
@@ -134,7 +141,7 @@ vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 vie
         float G_smith_prime = G_1(NoR, k) * G_1(NoV, k);
         
         return w * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
-    } else if (light.type == 1) { // SPHERE
+    } else if (type == 1) { // SPHERE
         vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;  
         vec3 to_light = light_pos - position;
         vec3 L = normalize(to_light);
@@ -187,7 +194,7 @@ vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 vie
             w = 1.0;
         }
         return w * attenuation * norm * D_prime * G_smith_prime * F * light.energy / (4.0 * NoV);
-    } else if (light.type == 2) { // SPOT
+    } else if (type == 2) { // SPOT
         vec3 light_pos = light.WORLD_FROM_LIGHT[3].xyz;  
         vec3 to_light = light_pos - position;
         vec3 L = normalize(to_light);

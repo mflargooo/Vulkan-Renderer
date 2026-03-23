@@ -102,12 +102,11 @@ struct Viewer : RTG::Application {
 			float radius;
 			float cos_outer;
 			float cos_inner;
-			uint32_t type;
-			uint32_t shadow;
+			uint32_t flags; // flags & 0b11 yield the type of light, flags & b100 == 1 iff the light has a shadow map
 
 			static void pack_light(Light &light, S72::Light &s72_light);
 		};
-		static_assert(sizeof(Light) == 4*4*4+4*3+4+4+4+4+4+4, "Viewer::Light is packed");
+		static_assert(sizeof(Light) == 4*4*4+4*3+4+4+4+4+4, "Viewer::Light is packed");
 
 		struct Constants {
 			uint32_t material_type;
@@ -298,7 +297,7 @@ struct Viewer : RTG::Application {
 	std::vector< VkFramebuffer > shadow_map_fbs;
 	VkSampler shadow_map_sampler;
 	VkDescriptorPool shadow_map_descriptor_pool = VK_NULL_HANDLE;
-	std::vector< VkDescriptorSet > shadow_map_descriptors;
+	VkDescriptorSet shadow_map_descriptor;
 
 	// DataFile path -> buffer holding data obtained from DataFile path
 	std::unordered_map< std::string, Helpers::AllocatedBuffer > scene_vertices;

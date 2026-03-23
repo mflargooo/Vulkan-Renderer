@@ -651,7 +651,7 @@ Viewer::~Viewer() {
 		shadow_map_descriptor_pool = nullptr;
 		
 		// this also frees descriptor sets allocated from pool
-		shadow_map_descriptors.clear();
+		shadow_map_descriptor = VK_NULL_HANDLE;
 	}
 
 	if (shadow_map_sampler) {
@@ -1322,7 +1322,7 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			light = lights[node->light->name];
 			light.WORLD_FROM_LIGHT = xf;
 
-			uint32_t size = light.shadow ? std::max(1U, node->light->shadow) : 1;
+			uint32_t size = ((light.flags & 4) == 1) ? std::max(1U, node->light->shadow) : 1;
 			if (shadow_map_instances.size() > num_lights && size != shadow_map_instances[num_lights].extent.width) {
 				rtg.helpers.destroy_image(std::move(shadow_map_instances[num_lights]));
 				shadow_map_instances[num_lights] = rtg.helpers.create_image(
@@ -1604,23 +1604,23 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	}
 
 	if (shadow_map_views.size() != shadow_map_instances.size()) { // update shadow map containers
-		for (uint32_t i = 0; i < shadow_map_fbs.size(); i++) {
+		for (uint32_t i = 0; i < shadow_map_fbs.size(); ++i) {
 			vkDestroyFramebuffer(rtg.device, shadow_map_fbs[i], nullptr);
 			shadow_map_fbs[i] = VK_NULL_HANDLE;
 		}
 		shadow_map_fbs.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
 
-		for (uint32_t i = 0; i < shadow_map_views.size(); i++) {
+		for (uint32_t i = 0; i < shadow_map_views.size(); ++i) {
 			vkDestroyImageView(rtg.device, shadow_map_views[i], nullptr);
 			shadow_map_views[i] = VK_NULL_HANDLE;
 		}
 		shadow_map_views.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
 
-		if (shadow_map_sampler != VK_NULL_HANDLE)vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
+		if (shadow_map_sampler != VK_NULL_HANDLE) vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
 		shadow_map_sampler = VK_NULL_HANDLE;
 
 		if (shadow_map_descriptor_pool != VK_NULL_HANDLE) vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
-		shadow_map_descriptors.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
+		shadow_map_descriptor = VK_NULL_HANDLE;
 
 		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) { // image view
 			{
@@ -1666,7 +1666,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			VK( vkCreateSampler(rtg.device, &create_info, nullptr, &shadow_map_sampler) );
 		}
 
-		{ // create the texture descriptor pool
+		{ // create the shadow map descriptor pool
 			uint32_t per_shadow = (uint32_t)shadow_map_instances.size();
 			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
 				VkDescriptorPoolSize{
@@ -1695,9 +1695,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					.pSetLayouts = &objects_pipeline.set9_Shadows,
 				};
 				
-				for (auto &descriptor_set : shadow_map_descriptors) {
-					VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set) );
-				}
+				VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &shadow_map_descriptor) );
 			}
 
 			std::vector< VkDescriptorImageInfo > infos(shadow_map_instances.size());
@@ -1705,6 +1703,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			
 			for (Helpers::AllocatedImage const &image : shadow_map_instances) {
 				size_t i = &image - &shadow_map_instances[0];
+				std::cout << i+1 << "/" << shadow_map_instances.size() << std::endl;
 				infos[i] = VkDescriptorImageInfo{
 					.sampler = shadow_map_sampler,
 					.imageView = shadow_map_views[i],
@@ -1712,7 +1711,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				};
 				writes[i] = VkWriteDescriptorSet{
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = shadow_map_descriptors[i],
+					.dstSet = shadow_map_descriptor,
 					.dstBinding = 0,
 					.dstArrayElement = 0,
 					.descriptorCount = 1,
@@ -1747,7 +1746,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
 			ObjectsPipeline::Light &light = light_instances[i];
-			if (light.shadow == 0) continue;
+			if ((light.flags & 4) == 0) continue;
 
 			VkRenderPassBeginInfo begin_info {
 				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -2000,7 +1999,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
 					objects_pipeline.layout, // pipeline layout
 					9, // ninth set
-					uint32_t(shadow_map_descriptors.size()), shadow_map_descriptors.data(), // descriptor sets count, ptr
+					1, &shadow_map_descriptor, // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 			}
