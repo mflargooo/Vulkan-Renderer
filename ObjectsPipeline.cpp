@@ -199,6 +199,25 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
         VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set8_Lights) );
     }
 
+    { // the set9_Shadows layout holds an array of Light structures in a storage buffer used in the vertex shader
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings {
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK ( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set8_Lights) );
+    }
+
     { // create pipeline layout
         VkPushConstantRange range{
             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -206,7 +225,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             .size = sizeof(Constants),
         };
 
-        std::array< VkDescriptorSetLayout, 9 > layouts{
+        std::array< VkDescriptorSetLayout, 10 > layouts{
             set0_World,
             set1_Transforms,
             set2_Camera,
@@ -216,6 +235,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             set6_ROUGHNESS_MAP,
             set7_METALNESS_MAP,
             set8_Lights,
+            set9_Shadows,
         };
 
         VkPipelineLayoutCreateInfo create_info{

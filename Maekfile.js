@@ -68,6 +68,11 @@ const objects_shaders = [
 ];
 main_objs.push( maek.CPP('ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 
+const shadows_shaders = [
+	maek.GLSLC('shadows.vert'),
+];
+main_objs.push( maek.CPP('ShadowPipeline.cpp', undefined, { depends:[...shadows_shaders] } ) );
+
 
 const main_exe = maek.LINK([...main_objs, ...common_objs], 'bin/viewer');
 

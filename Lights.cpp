@@ -7,11 +7,13 @@ void Viewer::ObjectsPipeline::Light::pack_light(Viewer::ObjectsPipeline::Light &
         light.energy = s72_light.tint * p_sun->strength;
         light.radius = p_sun->angle;
         light.type = 0;
+        light.shadow = 0;
     } else if (auto p_sphere = std::get_if< S72::Light::Sphere >(&s72_light.source)) {
         light.energy = s72_light.tint * p_sphere->power;
         light.limit_inv = std::isinf(p_sphere->limit) ? 0.f : 1.f / p_sphere->limit;
         light.radius = p_sphere->radius;
         light.type = 1;
+        light.shadow = 0;
     } else if (auto p_spot = std::get_if< S72::Light::Spot >(&s72_light.source)) {
         light.energy = s72_light.tint * p_spot->power;
         light.cos_inner = std::cosf(p_spot->fov * .5f * (1.f - p_spot->blend));
@@ -19,5 +21,6 @@ void Viewer::ObjectsPipeline::Light::pack_light(Viewer::ObjectsPipeline::Light &
         light.limit_inv = std::isinf(p_spot->limit) ? 0.f : 1.f / p_spot->limit;
         light.radius = p_spot->radius;
         light.type = 2;
+        light.shadow = s72_light.shadow > 0 ? 1 : 0;
     } 
 };

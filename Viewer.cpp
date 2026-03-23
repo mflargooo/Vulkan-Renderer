@@ -132,6 +132,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	background_pipeline.create(rtg, render_pass, 0);
 	lines_pipeline.create(rtg, render_pass, 0);
 	objects_pipeline.create(rtg, render_pass, 0);
+	shadow_pipeline.create(rtg, shadow_render_pass, 0);
 
 	{ // create descriptor pool
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size()); // for easier-to-read counting
@@ -603,6 +604,36 @@ Viewer::~Viewer() {
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Viewer::~Viewer [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
+
+	if (shadow_map_descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, shadow_map_descriptor_pool, nullptr);
+		shadow_map_descriptor_pool = nullptr;
+		
+		// this also frees descriptor sets allocated from pool
+		shadow_map_descriptors.clear();
+	}
+
+	if (shadow_map_sampler) {
+		vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
+		shadow_map_sampler = VK_NULL_HANDLE;
+	}
+
+	for (VkImageView &view : shadow_map_views) {
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	shadow_map_views.clear();
+
+	for (auto &shadow_map : shadow_map_instances) {
+		rtg.helpers.destroy_image(std::move(shadow_map));
+	}
+	shadow_map_instances.clear();
+
+	for (auto &fb : shadow_map_fbs) {
+		vkDestroyFramebuffer(rtg.device, fb, nullptr);
+		fb = VK_NULL_HANDLE;
+	}
+	shadow_map_fbs.clear();
 
 	if (env_map_descriptor_pool) {
 		vkDestroyDescriptorPool(rtg.device, env_map_descriptor_pool, nullptr);
@@ -1178,6 +1209,7 @@ int Viewer::load_scene(const std::string &filename) {
 void Viewer::parse_scene_graph() { // populate all object instances
 	object_instances.clear();
 	light_instances.clear();
+	uint32_t num_lights = 0;
 
 	struct Element {
 		S72::Node *node;
@@ -1248,6 +1280,29 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			ObjectsPipeline::Light &light = light_instances.back();
 			light = lights[node->light->name];
 			light.WORLD_FROM_LIGHT = xf;
+
+			uint32_t size = light.shadow ? std::max(1U, node->light->shadow) : 1;
+			if (shadow_map_instances.size() > num_lights && size != shadow_map_instances[num_lights].extent.width) {
+				rtg.helpers.destroy_image(std::move(shadow_map_instances[num_lights]));
+				shadow_map_instances[num_lights] = rtg.helpers.create_image(
+					VkExtent2D{ .width = size, .height = size },
+					VK_FORMAT_D32_SFLOAT, // how to interpret image data
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+					Helpers::Unmapped
+				);
+			} else if (shadow_map_instances.size() <= num_lights) {
+				shadow_map_instances.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{ .width = size, .height = size },
+					VK_FORMAT_D32_SFLOAT, // how to interpret image data
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+					Helpers::Unmapped
+				));
+			}
+			num_lights++;
 		}
 	}
 };
@@ -1433,7 +1488,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
 	}
 
-	if (!light_instances.empty()) {
+	{ // bind lights
 		size_t needed_bytes = light_instances.size() * sizeof(ObjectsPipeline::Light) + 16; // + 16 for the number of lights information
 		if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Lights_src.size < needed_bytes) {
 			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
@@ -1507,10 +1562,255 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
 	}
 
+	if (shadow_map_views.size() != shadow_map_instances.size()) { // update shadow map containers
+		for (uint32_t i = 0; i < shadow_map_fbs.size(); i++) {
+			vkDestroyFramebuffer(rtg.device, shadow_map_fbs[i], nullptr);
+			shadow_map_fbs[i] = VK_NULL_HANDLE;
+		}
+		shadow_map_fbs.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
+
+		for (uint32_t i = 0; i < shadow_map_views.size(); i++) {
+			vkDestroyImageView(rtg.device, shadow_map_views[i], nullptr);
+			shadow_map_views[i] = VK_NULL_HANDLE;
+		}
+		shadow_map_views.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
+
+		vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
+		shadow_map_sampler = VK_NULL_HANDLE;
+
+		vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
+		shadow_map_descriptors.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
+
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) { // image view
+			{
+				VkImageViewCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.flags = 0,
+					.image = shadow_map_instances[i].handle,
+					.viewType = VK_IMAGE_VIEW_TYPE_2D,
+					.format = shadow_map_instances[i].format,
+					// .components auto initialized
+					.subresourceRange{
+						.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+						.baseMipLevel = 0,
+						.levelCount = 1,
+						.baseArrayLayer = 0,
+						.layerCount = 1,
+					},
+				};
+				VK( vkCreateImageView(rtg.device, &create_info, nullptr, &shadow_map_views[i]) );
+			}
+		}
+
+		{
+			VkSamplerCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+				.flags = 0,
+				.magFilter = VK_FILTER_NEAREST,
+				.minFilter = VK_FILTER_NEAREST,
+				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+				.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+				.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+				.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+				.mipLodBias = 0.f,
+				.anisotropyEnable  = VK_FALSE,
+				.maxAnisotropy = 0.f,
+				.compareEnable = VK_FALSE,
+				.compareOp = VK_COMPARE_OP_ALWAYS,
+				.minLod = 0.f,
+				.maxLod = 0.f,
+				.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+				.unnormalizedCoordinates = VK_FALSE,
+			};
+			VK( vkCreateSampler(rtg.device, &create_info, nullptr, &shadow_map_sampler) );
+		}
+
+		{ // create the texture descriptor pool
+			uint32_t per_shadow = (uint32_t)shadow_map_instances.size();
+			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.descriptorCount = 1 * 1 * per_shadow, // one desc per set, on set per shadow_map
+				},
+			};
+
+			VkDescriptorPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+				.maxSets = 1 * per_shadow, // one set per texture
+				.poolSizeCount = uint32_t(pool_sizes.size()),
+				.pPoolSizes = pool_sizes.data(),
+			};
+
+			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &shadow_map_descriptor_pool) );
+		}
+
+		{
+			{ // allocate
+				VkDescriptorSetAllocateInfo alloc_info{
+					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+					.descriptorPool = shadow_map_descriptor_pool,
+					.descriptorSetCount = 1,
+					.pSetLayouts = &objects_pipeline.set9_Shadows,
+				};
+				
+				for (auto &descriptor_set : shadow_map_descriptors) {
+					VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set) );
+				}
+			}
+
+			std::vector< VkDescriptorImageInfo > infos(shadow_map_instances.size());
+			std::vector< VkWriteDescriptorSet > writes(shadow_map_instances.size());
+			
+			for (Helpers::AllocatedImage const &image : shadow_map_instances) {
+				size_t i = &image - &shadow_map_instances[0];
+				infos[i] = VkDescriptorImageInfo{
+					.sampler = shadow_map_sampler,
+					.imageView = shadow_map_views[i],
+					.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+				};
+				writes[i] = VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = shadow_map_descriptors[i],
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &infos[i],
+				};
+			}
+			
+			vkUpdateDescriptorSets(rtg.device, (uint32_t)(writes.size()), writes.data(), 0, nullptr);
+		}
+
+		{ // create fbs
+			for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+				VkFramebufferCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+					.renderPass = shadow_render_pass,
+					.attachmentCount = 1,
+					.pAttachments = &shadow_map_views[i],
+					.width = shadow_map_instances[i].extent.width,
+					.height = shadow_map_instances[i].extent.height,
+					.layers = 1,
+				};
+				VK( vkCreateFramebuffer(rtg.device, &create_info, nullptr, &shadow_map_fbs[i]) );
+			}
+		}
+	}
+
 	{ // mem barrier to make sure copies complete before rendering happens
 		VkMemoryBarrier memory_barrier{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
 			.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+		};
+
+		vkCmdPipelineBarrier( workspace.command_buffer, 
+			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT , // srcStageMask
+			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // dstStageMask
+			0, // dependencyFlags
+			1, &memory_barrier, // memoryBarriers (count, data)
+			0, nullptr, // bufferMemoryBarriers (count, data)
+			0, nullptr // imageMemoryBarriers (count, data)
+		);
+	}
+
+	{ // shadow pass (depth only)
+		std::array< VkClearValue, 1 > clear_values {
+			VkClearValue{ .depthStencil{ .depth = 1.f, .stencil = 0 } },
+		};
+
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+			ObjectsPipeline::Light &light = light_instances[i];
+			if (light.shadow == 0) continue;
+
+			VkRenderPassBeginInfo begin_info {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = shadow_render_pass,
+				.framebuffer = shadow_map_fbs[i],
+				.renderArea {
+					.offset = {.x = 0, .y = 0},
+					.extent = shadow_map_instances[i].extent,
+				},
+				.clearValueCount = uint32_t(clear_values.size()),
+				.pClearValues = clear_values.data(),
+			};
+
+			vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
+			
+			{
+				VkRect2D scissor {
+					.offset = {.x = 0, .y = 0},
+					.extent = shadow_map_instances[i].extent,
+				};
+				vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			}		
+
+			{ // configure viewport transform
+				VkViewport viewport {
+					.x = 0.f,
+					.y = 0.f,
+					.width = float(shadow_map_instances[i].extent.width),
+					.height = float(shadow_map_instances[i].extent.height),
+					.minDepth = 0.f,
+					.maxDepth = 1.f,
+				};
+				vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+			}
+
+
+			ShadowPipeline::Constants constants{
+				.LIGHT_CLIP_FROM_WORLD = perspective(
+					std::acosf(light.cos_outer) * 2.f, 
+					1.f,
+					.01f, 
+					light.limit_inv > 0.0 ? 1.f / light.limit_inv : 1000.f
+				) * glm::inverse(light.WORLD_FROM_LIGHT)
+			};
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);
+			
+			vkCmdPushConstants(workspace.command_buffer, shadow_pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(constants), &constants);
+			
+			for (auto &[object_vertices, instances] : drawables) { // draw w objects pipeline
+
+				{ // use object_vertices (offset 0) as vert buf binding 0
+					std::array< VkBuffer, 1 > vertex_buffers{ object_vertices->handle };
+					std::array< VkDeviceSize, 1 > offsets{ 0 };
+					vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+				}
+
+				{ // bind World, Transforms, Camera descriptor sets
+					std::array< VkDescriptorSet, 1 > descriptor_sets {
+						workspace.Transforms_descriptors, // 1: Transforms
+					};
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer, // cmd buf
+						VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+						shadow_pipeline.layout, // pipeline layout
+						0, // first set
+						uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+						0, nullptr // dynamic offsets count, ptr
+					);
+				}
+				// cam descriptor set still bound but unused
+
+				// draw all instances
+				for (auto &inst : instances) {
+					uint32_t index = (uint32_t)(inst - &object_instances[0]);
+					vkCmdDraw(workspace.command_buffer, inst->vertices.count, 1, inst->vertices.first, index);
+				}
+			}
+
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
+	}
+
+	{ // mem barrier to make sure copies complete before rendering happens
+		VkMemoryBarrier memory_barrier{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 			.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
 		};
 

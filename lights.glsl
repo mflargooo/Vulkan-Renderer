@@ -6,6 +6,7 @@ struct Light {
     float cos_outer;
     float cos_inner;
     uint type;
+    uint shadow;
 };
 
 layout(set=8, binding=0, std430) readonly buffer Lights {
@@ -77,7 +78,6 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
             spot_blend = clamp((cos_theta - light.cos_outer) / (light.cos_inner - light.cos_outer), 0.0, 1.0);
         }
 
-
         float attenuation = physical_falloff * nonphysical_falloff * spot_blend;
 
         float w = horizon_approx(NoL, sin_ha);
@@ -100,17 +100,17 @@ vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 vie
         float sin_ha = sin(half_angle);
         float cos_ha = cos(half_angle);
 
-        vec3 r = reflect(-view, normal);
-        if (dot(r, L) < cos_ha) { 
+        vec3 R = reflect(-view, normal);
+        if (dot(R, L) < cos_ha) { 
             // if r outside the disc, rescale perpendicular direction to disc size
-            vec3 p = r - dot(r, L) * L;
-            r = normalize(L * cos_ha + normalize(p) * sin_ha);
+            vec3 p = R - dot(R, L) * L;
+            R = normalize(L * cos_ha + normalize(p) * sin_ha);
         }
 
-        float NoR = dot(normal, r);
+        float NoR = dot(normal, R);
         if (NoR <= 0.0) return vec3(0.0);
 
-        vec3 h = normalize(view + r);
+        vec3 h = normalize(view + R);
         float NoV = dot(normal, view);
         float NoH = dot(normal, h);
         float VoH = dot(view, h);
