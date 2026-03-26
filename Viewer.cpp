@@ -1851,8 +1851,6 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					light.limit_inv > 0.0 ? 1.f / light.limit_inv : 20.f
 				) * glm::inverse(light.WORLD_FROM_LIGHT)
 			};
-			
-			constants.LIGHT_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
 
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);
 			
