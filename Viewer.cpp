@@ -51,7 +51,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
 				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
 				.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-				.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
 			},
 		};
 
@@ -788,6 +788,7 @@ Viewer::~Viewer() {
 	background_pipeline.destroy(rtg);
 	lines_pipeline.destroy(rtg);
 	objects_pipeline.destroy(rtg);
+	shadow_pipeline.destroy(rtg);
 
 	// destroy command pool
 	if (command_pool != VK_NULL_HANDLE) {
@@ -798,6 +799,11 @@ Viewer::~Viewer() {
 	if (render_pass != VK_NULL_HANDLE) {
 		vkDestroyRenderPass(rtg.device, render_pass, nullptr);
 		render_pass = VK_NULL_HANDLE;
+	}
+
+	if (shadow_render_pass != VK_NULL_HANDLE) {
+		vkDestroyRenderPass(rtg.device, shadow_render_pass, nullptr);
+		shadow_render_pass = VK_NULL_HANDLE;
 	}
 }
 
@@ -1322,12 +1328,12 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			light = lights[node->light->name];
 			light.WORLD_FROM_LIGHT = xf;
 
-			uint32_t size = ((light.flags & 4) == 1) ? std::max(1U, node->light->shadow) : 1;
+			uint32_t size = ((light.flags & 4) != 0) ? std::max(1U, node->light->shadow) : 1U;
 			if (shadow_map_instances.size() > num_lights && size != shadow_map_instances[num_lights].extent.width) {
 				rtg.helpers.destroy_image(std::move(shadow_map_instances[num_lights]));
 				shadow_map_instances[num_lights] = rtg.helpers.create_image(
 					VkExtent2D{ .width = size, .height = size },
-					VK_FORMAT_D32_SFLOAT, // how to interpret image data
+					depth_format, // how to interpret image data
 					VK_IMAGE_TILING_OPTIMAL,
 					VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, // will sample and upload
 					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
@@ -1336,7 +1342,7 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			} else if (shadow_map_instances.size() <= num_lights) {
 				shadow_map_instances.emplace_back(rtg.helpers.create_image(
 					VkExtent2D{ .width = size, .height = size },
-					VK_FORMAT_D32_SFLOAT, // how to interpret image data
+					depth_format, // how to interpret image data
 					VK_IMAGE_TILING_OPTIMAL,
 					VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, // will sample and upload
 					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
@@ -1603,7 +1609,25 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
 	}
 
+	{ // wait for data to copy
+		VkMemoryBarrier barrier{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		};
+
+		vkCmdPipelineBarrier(workspace.command_buffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+			0,
+			1, &barrier,
+			0, nullptr,
+			0, nullptr
+		);
+	}
+
 	if (shadow_map_views.size() != shadow_map_instances.size()) { // update shadow map containers
+		std::cout << "Rebuilding shadow map containers" << std::endl;
 		for (uint32_t i = 0; i < shadow_map_fbs.size(); ++i) {
 			vkDestroyFramebuffer(rtg.device, shadow_map_fbs[i], nullptr);
 			shadow_map_fbs[i] = VK_NULL_HANDLE;
@@ -1616,10 +1640,10 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		}
 		shadow_map_views.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
 
-		if (shadow_map_sampler != VK_NULL_HANDLE) vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
+		if (shadow_map_sampler) vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
 		shadow_map_sampler = VK_NULL_HANDLE;
 
-		if (shadow_map_descriptor_pool != VK_NULL_HANDLE) vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
+		if (shadow_map_descriptor_pool) vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
 		shadow_map_descriptor = VK_NULL_HANDLE;
 
 		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) { // image view
@@ -1643,23 +1667,23 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			}
 		}
 
-		{
+		{ // https://gamedev.net/forums/topic/717811-shadow-mapping-in-vulkan-issue/
 			VkSamplerCreateInfo create_info{
 				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 				.flags = 0,
-				.magFilter = VK_FILTER_NEAREST,
-				.minFilter = VK_FILTER_NEAREST,
-				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+				.magFilter = VK_FILTER_LINEAR,
+				.minFilter = VK_FILTER_LINEAR,
+				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
 				.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
 				.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
 				.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
 				.mipLodBias = 0.f,
 				.anisotropyEnable  = VK_FALSE,
 				.maxAnisotropy = 0.f,
-				.compareEnable = VK_FALSE,
-				.compareOp = VK_COMPARE_OP_ALWAYS,
+				.compareEnable = VK_TRUE,
+				.compareOp = VK_COMPARE_OP_LESS,
 				.minLod = 0.f,
-				.maxLod = 0.f,
+				.maxLod = VK_LOD_CLAMP_NONE,
 				.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
 				.unnormalizedCoordinates = VK_FALSE,
 			};
@@ -1668,6 +1692,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		{ // create the shadow map descriptor pool
 			uint32_t per_shadow = (uint32_t)shadow_map_instances.size();
+			per_shadow = 128;
 			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
 				VkDescriptorPoolSize{
 					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -1703,7 +1728,6 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			
 			for (Helpers::AllocatedImage const &image : shadow_map_instances) {
 				size_t i = &image - &shadow_map_instances[0];
-				std::cout << i+1 << "/" << shadow_map_instances.size() << std::endl;
 				infos[i] = VkDescriptorImageInfo{
 					.sampler = shadow_map_sampler,
 					.imageView = shadow_map_views[i],
@@ -1713,7 +1737,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 					.dstSet = shadow_map_descriptor,
 					.dstBinding = 0,
-					.dstArrayElement = 0,
+					.dstArrayElement = (uint32_t)i,
 					.descriptorCount = 1,
 					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 					.pImageInfo = &infos[i],
@@ -1736,6 +1760,42 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				};
 				VK( vkCreateFramebuffer(rtg.device, &create_info, nullptr, &shadow_map_fbs[i]) );
 			}
+		}
+	}
+
+	{
+		std::vector< VkImageMemoryBarrier > barriers;
+		barriers.reserve(shadow_map_instances.size());
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+			if ((light_instances[i].flags & 4) == 0) continue;
+			barriers.emplace_back(VkImageMemoryBarrier{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+				.srcAccessMask = VK_ACCESS_NONE,
+				.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.image = shadow_map_instances[i].handle,
+				.subresourceRange{
+					VK_IMAGE_ASPECT_DEPTH_BIT,
+					0,
+					1,
+					0,
+					1,
+				},
+			});
+		}
+
+		if (!barriers.empty()) {
+			vkCmdPipelineBarrier( workspace.command_buffer, 
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, // srcStageMask
+				VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, // dstStageMask
+				0, // dependencyFlags
+				0, nullptr, // memoryBarriers (count, data)
+				0, nullptr, // bufferMemoryBarriers (count, data)
+				(uint32_t)barriers.size(), barriers.data() // imageMemoryBarriers (count, data)
+			);
 		}
 	}
 
@@ -1787,10 +1847,12 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				.LIGHT_CLIP_FROM_WORLD = perspective(
 					std::acosf(light.cos_outer) * 2.f, 
 					1.f,
-					.01f, 
-					light.limit_inv > 0.0 ? 1.f / light.limit_inv : 1000.f
+					.1f, 
+					light.limit_inv > 0.0 ? 1.f / light.limit_inv : 20.f
 				) * glm::inverse(light.WORLD_FROM_LIGHT)
 			};
+			
+			constants.LIGHT_CLIP_FROM_WORLD = CLIP_FROM_WORLD;
 
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);
 			
@@ -1831,36 +1893,58 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	}
 
 	{ // mem barrier to make sure copies complete before rendering happens
-		std::vector< VkImageMemoryBarrier > memory_barriers(shadow_map_instances.size());
-		
+		std::vector< VkImageMemoryBarrier > barriers;
+		barriers.reserve(shadow_map_instances.size());
 		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
-				memory_barriers[i] = {
-				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-				.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-				.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-				.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-				.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-				.image = shadow_map_instances[i].handle,
-				.subresourceRange = { 
-					VK_IMAGE_ASPECT_DEPTH_BIT, 
-					0, 
-					1, 
-					0, 
-					1 
-				}
-			};
+			if ((light_instances[i].flags & 4) != 0) {;
+				barriers.emplace_back(VkImageMemoryBarrier{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+					.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+					.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+					.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.image = shadow_map_instances[i].handle,
+					.subresourceRange = { 
+						VK_IMAGE_ASPECT_DEPTH_BIT, 
+						0, 
+						1, 
+						0, 
+						1 
+					}
+				});
+			} else {
+				barriers.emplace_back(VkImageMemoryBarrier{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					.srcAccessMask = VK_ACCESS_NONE,
+					.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+					.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+					.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.image = shadow_map_instances[i].handle,
+					.subresourceRange = { 
+						VK_IMAGE_ASPECT_DEPTH_BIT, 
+						0, 
+						1, 
+						0, 
+						1 
+					}
+				});
+			}
 		}
 
-		vkCmdPipelineBarrier( workspace.command_buffer, 
-			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, // srcStageMask
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // dstStageMask
-			0, // dependencyFlags
-			0, nullptr, // memoryBarriers (count, data)
-			0, nullptr, // bufferMemoryBarriers (count, data)
-			(uint32_t)memory_barriers.size(), memory_barriers.data() // imageMemoryBarriers (count, data)
-		);
+		if (!barriers.empty()) {
+			vkCmdPipelineBarrier( workspace.command_buffer, 
+				VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, // srcStageMask
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // dstStageMask
+				0, // dependencyFlags
+				0, nullptr, // memoryBarriers (count, data)
+				0, nullptr, // bufferMemoryBarriers (count, data)
+				(uint32_t)barriers.size(), barriers.data() // imageMemoryBarriers (count, data)
+			);
+		}
 	}
 
 	{ // render pass
@@ -2079,6 +2163,8 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
+
+
 
 	//end rec
 	VK ( vkEndCommandBuffer(workspace.command_buffer) );

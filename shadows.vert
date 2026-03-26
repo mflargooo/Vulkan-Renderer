@@ -15,6 +15,9 @@ layout(push_constant) uniform Constants {
 };
 
 layout(location = 0) in vec3 Position;
+layout(location = 1) in vec3 Normal;
+layout(location = 2) in vec4 Tangent;
+layout(location = 3) in vec2 TexCoord;
 
 void main() {
     gl_Position = LIGHT_CLIP_FROM_WORLD * TRANSFROMS[gl_InstanceIndex].WORLD_FROM_LOCAL * vec4(Position, 1.0);

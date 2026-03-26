@@ -39,10 +39,15 @@ layout(location = 1) in vec3 normal;
 layout(location = 2) in vec3 tangent;
 layout(location = 3) in vec3 bitangent;
 layout(location = 4) in vec2 texCoord;
+layout(location = 5) in vec4 clip_pos;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {  
+    vec2 uv = clip_pos.xy / clip_pos.w * 0.5 + 0.5;
+    outColor = vec4(vec3(textureProj(SHADOWS[1], vec4(uv, clip_pos.z / clip_pos.w, 1.0))), 1.0);
+    return;
+
     vec3 n = normal;
     vec3 ns = normal;
     if (pc.has_normal_map != 0) {

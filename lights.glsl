@@ -13,9 +13,7 @@ layout(set=8, binding=0, std430) readonly buffer Lights {
     Light LIGHTS[];
 };
 
-layout(set=9, binding=0, std430) readonly buffer Shadows {
-    sampler2D SHADOWS[];
-};
+layout(set=9, binding=0) uniform sampler2DShadow SHADOWS[];
 
 // heavily inspired from s72-viewer https://github.com/15-472/s72/blob/main/viewer/s72-viewer.mjs
 float horizon_approx(float NoL, float sin_ha) {
@@ -27,7 +25,7 @@ float horizon_approx(float NoL, float sin_ha) {
 }
 
 vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
-    uint type = light.flags & 3;
+    uint type = light.flags & 4;
 
     if (type == 0) { // SUN
         vec3 L = normalize(light.WORLD_FROM_LIGHT[2].xyz);        
@@ -98,7 +96,7 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
 #include "ggx.glsl"
 
 vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 view, float roughness, vec3 tint) {
-    uint type = light.flags & 3;
+    uint type = light.flags & 4;
     
     if (type == 0) { // SUN
         vec3 L = normalize(light.WORLD_FROM_LIGHT[2].xyz);        

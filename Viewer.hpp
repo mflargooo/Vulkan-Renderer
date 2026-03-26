@@ -295,9 +295,9 @@ struct Viewer : RTG::Application {
 	std::vector< Helpers::AllocatedImage > shadow_map_instances;
 	std::vector< VkImageView > shadow_map_views;
 	std::vector< VkFramebuffer > shadow_map_fbs;
-	VkSampler shadow_map_sampler;
+	VkSampler shadow_map_sampler  = VK_NULL_HANDLE;
 	VkDescriptorPool shadow_map_descriptor_pool = VK_NULL_HANDLE;
-	VkDescriptorSet shadow_map_descriptor;
+	VkDescriptorSet shadow_map_descriptor = VK_NULL_HANDLE;
 
 	// DataFile path -> buffer holding data obtained from DataFile path
 	std::unordered_map< std::string, Helpers::AllocatedBuffer > scene_vertices;
