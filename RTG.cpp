@@ -427,8 +427,15 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 				});
 			}
 
+			VkPhysicalDeviceVulkan12Features pd_features{ // for shadow maps
+				.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+				.shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
+				.runtimeDescriptorArray = VK_TRUE,
+			};
+
 			VkDeviceCreateInfo create_info{
 				.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+				.pNext = &pd_features,
 				.queueCreateInfoCount = uint32_t(queue_create_infos.size()),
 				.pQueueCreateInfos = queue_create_infos.data(),
 
