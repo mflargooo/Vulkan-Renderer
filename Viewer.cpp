@@ -1326,6 +1326,12 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			light_instances.emplace_back();
 			ObjectsPipeline::Light &light = light_instances.back();
 			light = lights[node->light->name];
+			light.CLIP_FROM_WORLD = perspective(
+				std::acosf(light.cos_outer) * 2.f,
+				1.f,
+				.5f,
+				light.limit_inv > 0.f ? std::min(1.f / light.limit_inv, free_camera.far) : free_camera.far
+			) * glm::inverse(xf);
 			light.WORLD_FROM_LIGHT = xf;
 
 			uint32_t size = ((light.flags & 4) != 0) ? std::max(1U, node->light->shadow) : 1U;
@@ -1844,12 +1850,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 
 			ShadowPipeline::Constants constants{
-				.LIGHT_CLIP_FROM_WORLD = perspective(
-					std::acosf(light.cos_outer) * 2.f, 
-					1.f,
-					.1f, 
-					light.limit_inv > 0.0 ? 1.f / light.limit_inv : 20.f
-				) * glm::inverse(light.WORLD_FROM_LIGHT)
+				.LIGHT_CLIP_FROM_WORLD = light_instances[i].CLIP_FROM_WORLD,
 			};
 
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);

@@ -1,4 +1,7 @@
+#extension GL_EXT_nonuniform_qualifier : require
+
 struct Light {
+    mat4 CLIP_FROM_WORLD;
     mat4 WORLD_FROM_LIGHT;
     vec3 energy;
     float limit_inv;
@@ -25,7 +28,7 @@ float horizon_approx(float NoL, float sin_ha) {
 }
 
 vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
-    uint type = light.flags & 4;
+    uint type = light.flags & 3;
 
     if (type == 0) { // SUN
         vec3 L = normalize(light.WORLD_FROM_LIGHT[2].xyz);        
@@ -96,7 +99,7 @@ vec3 compute_diffuse_lighting(Light light, vec3 position, vec3 normal) {
 #include "ggx.glsl"
 
 vec3 compute_specular_lighting(Light light, vec3 position, vec3 normal, vec3 view, float roughness, vec3 tint) {
-    uint type = light.flags & 4;
+    uint type = light.flags & 3;
     
     if (type == 0) { // SUN
         vec3 L = normalize(light.WORLD_FROM_LIGHT[2].xyz);        
@@ -266,6 +269,13 @@ void forward_pass(vec3 position, vec3 normal, vec3 view, float roughness, vec3 t
     direct_diffuse = vec3(0.0);
     direct_specular = vec3(0.0);
     for (int i = 0; i < num_lights; ++i) {
+        if (LIGHTS[i].flags == 6) {
+            vec4 light_clip_pos = LIGHTS[i].CLIP_FROM_WORLD * vec4(position, 1.0);
+            vec3 uvw = light_clip_pos.xyz / light_clip_pos.w * 0.5 + 0.5;
+            float closest = textureProj(SHADOWS[nonuniformEXT(i)], vec4(uvw.xy, light_clip_pos.z / light_clip_pos.w, 1.0));
+            if (uvw.z > closest) continue;
+        }
+
         direct_diffuse += compute_diffuse_lighting(LIGHTS[i], position, normal);
         direct_specular += compute_specular_lighting(LIGHTS[i], position, normal, view, roughness, tint);
     }

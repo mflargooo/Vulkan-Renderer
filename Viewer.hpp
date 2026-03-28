@@ -96,6 +96,7 @@ struct Viewer : RTG::Application {
 		static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4, "Transform is the expected size.");
 
 		struct Light { // light structure for all light types
+			glm::mat4 CLIP_FROM_WORLD;
 			glm::mat4 WORLD_FROM_LIGHT;
 			glm::vec3 energy;
 			float limit_inv;
@@ -106,7 +107,7 @@ struct Viewer : RTG::Application {
 
 			static void pack_light(Light &light, S72::Light &s72_light);
 		};
-		static_assert(sizeof(Light) == 4*4*4+4*3+4+4+4+4+4, "Viewer::Light is packed");
+		static_assert(sizeof(Light) == (4*4*4)*2+4*3+4+4+4+4+4, "Viewer::Light is packed");
 
 		struct Constants {
 			uint32_t material_type;

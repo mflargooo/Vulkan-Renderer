@@ -21,8 +21,6 @@ layout(location = 2) out vec3 tangent;
 layout(location = 3) out vec3 bitangent;
 layout(location = 4) out vec2 texCoord;
 
-layout(location = 5) out vec4 clip_pos;
-
 void main() {
     gl_Position = TRANSFROMS[gl_InstanceIndex].CLIP_FROM_LOCAL * vec4(Position, 1.0);
     position = mat4x3(TRANSFROMS[gl_InstanceIndex].WORLD_FROM_LOCAL) * vec4(Position, 1.0);
@@ -32,6 +30,4 @@ void main() {
     tangent = t;
     bitangent = normalize(cross(n, t) * Tangent.w);
     texCoord = TexCoord;
-
-    clip_pos = TRANSFROMS[gl_InstanceIndex].CLIP_FROM_LOCAL * vec4(Position, 1.0);
 }
