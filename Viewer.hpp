@@ -260,6 +260,7 @@ struct Viewer : RTG::Application {
 	
 	glm::mat4 debug_CLIP_FROM_WORLD;
 	glm::mat4 CLIP_FROM_WORLD;
+	float aspect_ratio = 1.7778f;
 
 	std::vector< LinesPipeline::Vertex > lines_vertices;
 

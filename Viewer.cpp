@@ -1855,6 +1855,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);
 			
+			vkCmdSetDepthBias(workspace.command_buffer, 1.5f, 0.f, .75f);
 			vkCmdPushConstants(workspace.command_buffer, shadow_pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(constants), &constants);
 			
 			for (auto &[object_vertices, instances] : drawables) { // draw w objects pipeline
@@ -1967,7 +1968,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
 	
 		float swap_aspect = (float)(rtg.swapchain_extent.width) / (float)(rtg.swapchain_extent.height);
-		float camera_aspect = 1.77778f;
+		float camera_aspect = aspect_ratio;
 		float width = (float)(rtg.swapchain_extent.width), height = (float)(rtg.swapchain_extent.height), x = 0, y = 0;
 		if (swap_aspect > camera_aspect) { // set scissor rect
 			width = rtg.swapchain_extent.width * (camera_aspect / swap_aspect);
@@ -2352,6 +2353,7 @@ void Viewer::update(float dt) {
 	if (camera_mode == CameraMode::Scene) {
 		 //camera rotating around the origin:
 		auto scene_camera = selected_scene_camera->second;
+		aspect_ratio = scene_camera.aspect;
 		CLIP_FROM_WORLD = perspective(
 			scene_camera.vfov, //vfov
 			scene_camera.aspect, // rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
@@ -2360,9 +2362,10 @@ void Viewer::update(float dt) {
 		) * glm::inverse(scene_camera.transform.WORLD_FROM_LOCAL);
 	} else if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
 		OrbitCamera &user_camera = camera_mode == CameraMode::Free ? free_camera : debug_camera;
+		aspect_ratio = 1.7778f;
 		CLIP_FROM_WORLD = perspective(
 			user_camera.fov,
-			1.7778f, // aspect
+			aspect_ratio, // aspect
 			user_camera.near,
 			user_camera.far
 		) * orbit(
