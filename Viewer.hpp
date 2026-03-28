@@ -24,6 +24,7 @@ struct Viewer : RTG::Application {
 	VkFormat depth_format{};
 	//Render passes describe how pipelines write to images:
 	VkRenderPass render_pass = VK_NULL_HANDLE;
+	VkRenderPass shadow_render_pass = VK_NULL_HANDLE;
 
 	//Pipelines:
 	struct BackgroundPipeline {
@@ -75,6 +76,8 @@ struct Viewer : RTG::Application {
 		VkDescriptorSetLayout set5_NORMAL_MAP = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set6_ROUGHNESS_MAP = VK_NULL_HANDLE;
 		VkDescriptorSetLayout set7_METALNESS_MAP = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set8_Lights = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set9_Shadows = VK_NULL_HANDLE;
 
 		// types for descriptors
 		struct World {
@@ -91,6 +94,20 @@ struct Viewer : RTG::Application {
 			glm::mat4 WORLD_FROM_LOCAL_NORMAL;
 		};
 		static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4, "Transform is the expected size.");
+
+		struct Light { // light structure for all light types
+			glm::mat4 CLIP_FROM_WORLD;
+			glm::mat4 WORLD_FROM_LIGHT;
+			glm::vec3 energy;
+			float limit_inv;
+			float radius;
+			float cos_outer;
+			float cos_inner;
+			uint32_t flags; // flags & 0b11 yield the type of light, flags & b100 == 1 iff the light has a shadow map
+
+			static void pack_light(Light &light, S72::Light &s72_light);
+		};
+		static_assert(sizeof(Light) == (4*4*4)*2+4*3+4+4+4+4+4, "Viewer::Light is packed");
 
 		struct Constants {
 			uint32_t material_type;
@@ -111,6 +128,23 @@ struct Viewer : RTG::Application {
 		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
 		void destroy(RTG &);
 	} objects_pipeline;
+
+	struct ShadowPipeline {
+		VkDescriptorSetLayout set0_Transforms = VK_NULL_HANDLE;
+
+		struct Constants {
+			glm::mat4 LIGHT_CLIP_FROM_WORLD;
+		};
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		
+		using Vertex = PosNorTanTexVertex;
+		
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} shadow_pipeline;
 
 	//pools from which per-workspace things are allocated:
 	VkCommandPool command_pool = VK_NULL_HANDLE;
@@ -138,6 +172,11 @@ struct Viewer : RTG::Application {
 		Helpers::AllocatedBuffer Transforms_src; // host coherent; mapped
 		Helpers::AllocatedBuffer Transforms; // device-local
 		VkDescriptorSet Transforms_descriptors; // references Transforms
+
+		// location for ObjectPipeline::Lights data (streamed to GPU per frame)
+		Helpers::AllocatedBuffer Lights_src;
+		Helpers::AllocatedBuffer Lights;
+		VkDescriptorSet Lights_descriptors;
 	};
 	std::vector< Workspace > workspaces; 
 
@@ -221,6 +260,7 @@ struct Viewer : RTG::Application {
 	
 	glm::mat4 debug_CLIP_FROM_WORLD;
 	glm::mat4 CLIP_FROM_WORLD;
+	float aspect_ratio = 1.7778f;
 
 	std::vector< LinesPipeline::Vertex > lines_vertices;
 
@@ -252,6 +292,15 @@ struct Viewer : RTG::Application {
 	};
 	std::vector< ObjectInstance > object_instances;
 
+	std::unordered_map< std::string, ObjectsPipeline::Light > lights;
+	std::vector< ObjectsPipeline::Light > light_instances;
+	std::vector< Helpers::AllocatedImage > shadow_map_instances;
+	std::vector< VkImageView > shadow_map_views;
+	std::vector< VkFramebuffer > shadow_map_fbs;
+	VkSampler shadow_map_sampler  = VK_NULL_HANDLE;
+	VkDescriptorPool shadow_map_descriptor_pool = VK_NULL_HANDLE;
+	VkDescriptorSet shadow_map_descriptor = VK_NULL_HANDLE;
+
 	// DataFile path -> buffer holding data obtained from DataFile path
 	std::unordered_map< std::string, Helpers::AllocatedBuffer > scene_vertices;
 	
@@ -260,6 +309,7 @@ struct Viewer : RTG::Application {
 	// texture path -> *_view id
 	std::unordered_map< std::string, uint32_t > tex_ids;
 	std::unordered_map< std::string, uint32_t > cubemap_ids;
+
 
 	int load_scene(const std::string &file);
 	void parse_scene_graph();

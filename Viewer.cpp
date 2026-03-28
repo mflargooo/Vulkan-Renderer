@@ -40,6 +40,47 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
 	);
 
+	{ // create shadow render pass
+		// attachments
+		std::array< VkAttachmentDescription, 1 > attachments{
+			VkAttachmentDescription{ // 1 - depth
+				.format = depth_format,
+				.samples = VK_SAMPLE_COUNT_1_BIT,
+				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+				.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+			},
+		};
+
+		// subpass
+		VkAttachmentReference depth_attachment_ref{
+			.attachment = 0,
+			.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		};
+
+		VkSubpassDescription subpass{
+			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.inputAttachmentCount = 0,
+			.pInputAttachments = nullptr,
+			.colorAttachmentCount = 0,
+			.pColorAttachments = nullptr,
+			.pDepthStencilAttachment = &depth_attachment_ref,
+		};
+
+		VkRenderPassCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+			.attachmentCount = uint32_t(attachments.size()),
+			.pAttachments = attachments.data(),
+			.subpassCount = 1,
+			.pSubpasses = &subpass,
+		};
+
+		VK( vkCreateRenderPass(rtg.device, &create_info, nullptr, &shadow_render_pass) );
+	}
+
 	{ // create render pass
 		// attachments
 		std::array< VkAttachmentDescription, 2 > attachments{
@@ -132,6 +173,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	background_pipeline.create(rtg, render_pass, 0);
 	lines_pipeline.create(rtg, render_pass, 0);
 	objects_pipeline.create(rtg, render_pass, 0);
+	shadow_pipeline.create(rtg, shadow_render_pass, 0);
 
 	{ // create descriptor pool
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size()); // for easier-to-read counting
@@ -150,7 +192,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0, // omission of CREATE_FREE_DESCRIPTOR_SET_BIT, prevent individual descriptors allocated from this pool
-			.maxSets = 3 * per_workspace, // three sets per workspace
+			.maxSets = 4 * per_workspace, // three sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -229,6 +271,17 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Transforms_descriptors) );
 			// will fill in this descriptor set in render when buffers are [re-]allocated
+		}
+
+		{ // allocate descriptor set for Lights descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set8_Lights,
+			};
+
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors) );
 		}
 
 		{ // point descriptor to camera buffer
@@ -461,125 +514,146 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// env_maps vector is ordered such that the ith entry is the ith mip
 	// the lambertian prefiltered.
 
+	bool default_env_map = env_maps.empty();
+	if (env_maps.empty()) { // create dummy data
+		for (uint32_t i = 0; i < 2; ++i) {
+			env_maps.emplace_back(rtg.helpers.create_cubemap(
+				VkExtent2D{ .width = 1, .height = 1 },
+				VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			));
+
+			uint64_t pixels[6] = { 0, 0, 0, 0, 0, 0 };
+			rtg.helpers.transfer_to_cubemap(&pixels, sizeof(uint64_t) * 6, env_maps.back());
+		}
+	}
+	
+	assert(env_maps.size() == 2); // lambertian and pbr
 	// make cubemap views 0 - lambertian, 1 - mirror, 2 - env, 3 - pbr
-	{ // make image views for the env_maps
-		env_map_views.reserve(3);
-		// lambertian
+	{
+		{ // make image views for the env_maps
+			env_map_views.reserve(3);
+			// lambertian
 
-		struct EnvMapView {
-			VkImageViewType type;
-			Helpers::AllocatedImage *image = nullptr;
-			uint32_t level_count = 1;
-		} view_infos[3] = { 
-			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
-			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = mip_levels }, // pbr
-			{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
-		};
+			struct EnvMapView {
+				VkImageViewType type;
+				Helpers::AllocatedImage *image = nullptr;
+				uint32_t level_count = 1;
+			} view_infos[3] = { 
+				{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
+				{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = default_env_map ? 1 : mip_levels }, // pbr
+				{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
+			};
 
-		for (EnvMapView &info : view_infos) {
-			VkImageViewCreateInfo create_info{
-				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			for (EnvMapView &info : view_infos) {
+				VkImageViewCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.flags = 0,
+					.image = info.image->handle,
+					.viewType = info.type,
+					.format = info.image->format,
+					// .components sets swizzling and is fine when zero inited
+					.subresourceRange{
+						.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+						.baseMipLevel = 0,
+						.levelCount = info.level_count,
+						.baseArrayLayer = 0,
+						.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
+					},
+				};
+
+				VkImageView image_view = VK_NULL_HANDLE;
+				VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
+
+				env_map_views.emplace_back(image_view);
+			}
+		}
+
+		for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, default_env_map ? 0 : mip_levels, 0 }) { // make a sampler for the env_maps
+			env_map_samplers.emplace_back(VK_NULL_HANDLE);
+			VkSamplerCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 				.flags = 0,
-				.image = info.image->handle,
-				.viewType = info.type,
-				.format = info.image->format,
-				// .components sets swizzling and is fine when zero inited
-				.subresourceRange{
-					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-					.baseMipLevel = 0,
-					.levelCount = info.level_count,
-					.baseArrayLayer = 0,
-					.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
+				.magFilter = VK_FILTER_LINEAR,
+				.minFilter = VK_FILTER_LINEAR,
+				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+				.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+				.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+				.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+				.mipLodBias = 0.f,
+				.anisotropyEnable  = VK_FALSE,
+				.maxAnisotropy = 0.f,
+				.compareEnable = VK_FALSE,
+				.compareOp = VK_COMPARE_OP_ALWAYS,
+				.minLod = 0.f,
+				.maxLod = float(level_count),
+				.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+				.unnormalizedCoordinates = VK_FALSE,
+			};
+			VK( vkCreateSampler(rtg.device, &create_info, nullptr, &env_map_samplers.back()) );
+		}
+
+		{ // create the cubemap descriptor pool
+			uint32_t per_cubemap_view = uint32_t(env_map_views.size()); // for easier to read counting
+
+			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.descriptorCount = 1 * 1 * per_cubemap_view, // one desc per set, on set per tex
 				},
 			};
 
-			VkImageView image_view = VK_NULL_HANDLE;
-			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
-
-			env_map_views.emplace_back(image_view);
-		}
-	}
-
-	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels, 0 }) { // make a sampler for the env_maps
-		env_map_samplers.emplace_back(VK_NULL_HANDLE);
-		VkSamplerCreateInfo create_info{
-			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-			.flags = 0,
-			.magFilter = VK_FILTER_LINEAR,
-			.minFilter = VK_FILTER_LINEAR,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.mipLodBias = 0.f,
-			.anisotropyEnable  = VK_FALSE,
-			.maxAnisotropy = 0.f,
-			.compareEnable = VK_FALSE,
-			.compareOp = VK_COMPARE_OP_ALWAYS,
-			.minLod = 0.f,
-			.maxLod = float(level_count),
-			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-			.unnormalizedCoordinates = VK_FALSE,
-		};
-		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &env_map_samplers.back()) );
-	}
-
-	{ // create the cubemap descriptor pool
-		uint32_t per_cubemap_view = uint32_t(env_map_views.size()); // for easier to read counting
-
-		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
-			VkDescriptorPoolSize{
-				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 1 * 1 * per_cubemap_view, // one desc per set, on set per tex
-			},
-		};
-
-		VkDescriptorPoolCreateInfo create_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-			.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-			.maxSets = 1 * per_cubemap_view, // one set per texture
-			.poolSizeCount = uint32_t(pool_sizes.size()),
-			.pPoolSizes = pool_sizes.data(),
-		};
-
-		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &env_map_descriptor_pool) );
-	}
-
-	{ // allocate and write the cubemap descriptor sets
-		// allocate the descriptors (using same alloc_info)
-		VkDescriptorSetAllocateInfo alloc_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = env_map_descriptor_pool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set4_ENV_MAP,
-		};
-		env_map_descriptor = VK_NULL_HANDLE;
-		VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &env_map_descriptor) );
-
-		// write descriptor for env_maps
-		std::vector< VkDescriptorImageInfo > infos(env_map_views.size());
-		std::vector< VkWriteDescriptorSet > writes(env_map_views.size());
-
-		for (auto const &cubemap_view : env_map_views) {
-			size_t i = &cubemap_view - &env_map_views[0];
-
-			infos[i] = VkDescriptorImageInfo{
-				.sampler = env_map_samplers[i],
-				.imageView = cubemap_view,
-				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VkDescriptorPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+				.maxSets = 1 * per_cubemap_view, // one set per texture
+				.poolSizeCount = uint32_t(pool_sizes.size()),
+				.pPoolSizes = pool_sizes.data(),
 			};
-			writes[i] = VkWriteDescriptorSet{
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = env_map_descriptor,
-				.dstBinding = (uint32_t)i,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.pImageInfo = &infos[i],
-			};
+
+			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &env_map_descriptor_pool) );
 		}
 
-		vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
+		{ // allocate and write the cubemap descriptor sets
+			// allocate the descriptors (using same alloc_info)
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = env_map_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set4_ENV_MAP,
+			};
+			env_map_descriptor = VK_NULL_HANDLE;
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &env_map_descriptor) );
+
+			// write descriptor for env_maps
+			std::vector< VkDescriptorImageInfo > infos(env_map_views.size());
+			std::vector< VkWriteDescriptorSet > writes(env_map_views.size());
+
+			for (auto const &cubemap_view : env_map_views) {
+				size_t i = &cubemap_view - &env_map_views[0];
+
+				infos[i] = VkDescriptorImageInfo{
+					.sampler = env_map_samplers[i],
+					.imageView = cubemap_view,
+					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				};
+				writes[i] = VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = env_map_descriptor,
+					.dstBinding = (uint32_t)i,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &infos[i],
+				};
+			}
+
+			vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
+		}
+
 	}
 }
 
@@ -589,6 +663,36 @@ Viewer::~Viewer() {
 	if (VkResult result = vkDeviceWaitIdle(rtg.device); result != VK_SUCCESS) {
 		std::cerr << "Failed to vkDeviceWaitIdle in Viewer::~Viewer [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
+
+	if (shadow_map_descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, shadow_map_descriptor_pool, nullptr);
+		shadow_map_descriptor_pool = nullptr;
+		
+		// this also frees descriptor sets allocated from pool
+		shadow_map_descriptor = VK_NULL_HANDLE;
+	}
+
+	if (shadow_map_sampler) {
+		vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
+		shadow_map_sampler = VK_NULL_HANDLE;
+	}
+
+	for (VkImageView &view : shadow_map_views) {
+		vkDestroyImageView(rtg.device, view, nullptr);
+		view = VK_NULL_HANDLE;
+	}
+	shadow_map_views.clear();
+
+	for (auto &shadow_map : shadow_map_instances) {
+		rtg.helpers.destroy_image(std::move(shadow_map));
+	}
+	shadow_map_instances.clear();
+
+	for (auto &fb : shadow_map_fbs) {
+		vkDestroyFramebuffer(rtg.device, fb, nullptr);
+		fb = VK_NULL_HANDLE;
+	}
+	shadow_map_fbs.clear();
 
 	if (env_map_descriptor_pool) {
 		vkDestroyDescriptorPool(rtg.device, env_map_descriptor_pool, nullptr);
@@ -653,6 +757,13 @@ Viewer::~Viewer() {
 			workspace.command_buffer = VK_NULL_HANDLE;
 		}
 
+		if (workspace.Lights_src.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Lights_src));
+		}
+		if (workspace.Lights.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Lights));
+		}
+
 		if (workspace.lines_vertices_src.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices_src));
 		}
@@ -695,6 +806,7 @@ Viewer::~Viewer() {
 	background_pipeline.destroy(rtg);
 	lines_pipeline.destroy(rtg);
 	objects_pipeline.destroy(rtg);
+	shadow_pipeline.destroy(rtg);
 
 	// destroy command pool
 	if (command_pool != VK_NULL_HANDLE) {
@@ -705,6 +817,11 @@ Viewer::~Viewer() {
 	if (render_pass != VK_NULL_HANDLE) {
 		vkDestroyRenderPass(rtg.device, render_pass, nullptr);
 		render_pass = VK_NULL_HANDLE;
+	}
+
+	if (shadow_render_pass != VK_NULL_HANDLE) {
+		vkDestroyRenderPass(rtg.device, shadow_render_pass, nullptr);
+		shadow_render_pass = VK_NULL_HANDLE;
 	}
 }
 
@@ -1004,7 +1121,7 @@ int Viewer::load_scene(const std::string &filename) {
 
 	{ // load materials
 		for (auto &[key, material] : s72.materials) {
-			// if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
+			if (rtg.configuration.debug) std::cerr << "[MATERIAL] " << material.name << std::endl;
 			
 			int32_t albedo_id = -1;
 			int32_t normal_id = material.normal_map ? (int32_t)tex_ids[material.normal_map->path] : -1;
@@ -1121,6 +1238,14 @@ int Viewer::load_scene(const std::string &filename) {
 		}
 	}
 
+	{ // load lights
+		for (auto &[name, s72_light] : s72.lights) {
+			if (rtg.configuration.debug) std::cerr << "[LIGHT] " << name << std::endl;
+			ObjectsPipeline::Light light;
+			ObjectsPipeline::Light::pack_light(light, s72_light);
+			lights.insert({ name, light });
+		}
+	}
 	parse_scene_graph();
 
 	if (rtg.configuration.camera.compare("")) { // select correct scene camera, if exists
@@ -1148,6 +1273,8 @@ int Viewer::load_scene(const std::string &filename) {
 
 void Viewer::parse_scene_graph() { // populate all object instances
 	object_instances.clear();
+	light_instances.clear();
+	uint32_t num_lights = 0;
 
 	struct Element {
 		S72::Node *node;
@@ -1214,17 +1341,39 @@ void Viewer::parse_scene_graph() { // populate all object instances
 				};
 			}
 		} else if (node->light) {
-			if (auto p_sun = std::get_if< S72::Light::Sun >(&node->light->source)) {
-				glm::vec3 direction = glm::normalize(glm::vec3(xf * glm::vec4(0.f, 0.f, 1.f, 0.f)));
-				
-				if (node->light->name == "Sun") {
-					world.SUN_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
-					world.SUN_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
-				} else if (node->light->name == "Sky") {
-					world.SKY_DIRECTION = { .x = direction.x, .y = direction.y, .z = direction.z };
-					world.SKY_ENERGY = { .r = node->light->tint.x * p_sun->strength, .g = node->light->tint.y * p_sun->strength, .b = node->light->tint.z * p_sun->strength };
-				}
+			light_instances.emplace_back();
+			ObjectsPipeline::Light &light = light_instances.back();
+			light = lights[node->light->name];
+			light.CLIP_FROM_WORLD = perspective(
+				std::acosf(light.cos_outer) * 2.f,
+				1.f,
+				.5f,
+				light.limit_inv > 0.f ? std::min(1.f / light.limit_inv, free_camera.far) : free_camera.far
+			) * glm::inverse(xf);
+			light.WORLD_FROM_LIGHT = xf;
+
+			uint32_t size = ((light.flags & 4) != 0) ? std::max(1U, node->light->shadow) : 1U;
+			if (shadow_map_instances.size() > num_lights && size != shadow_map_instances[num_lights].extent.width) {
+				rtg.helpers.destroy_image(std::move(shadow_map_instances[num_lights]));
+				shadow_map_instances[num_lights] = rtg.helpers.create_image(
+					VkExtent2D{ .width = size, .height = size },
+					depth_format, // how to interpret image data
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+					Helpers::Unmapped
+				);
+			} else if (shadow_map_instances.size() <= num_lights) {
+				shadow_map_instances.emplace_back(rtg.helpers.create_image(
+					VkExtent2D{ .width = size, .height = size },
+					depth_format, // how to interpret image data
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, // will sample and upload
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // should be device-local
+					Helpers::Unmapped
+				));
 			}
+			num_lights++;
 		}
 	}
 };
@@ -1385,7 +1534,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				0, nullptr // descriptorCopies count, data
 			);
 
-			std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
+			std::cout << "Re-allocated transforms buffers to " << new_bytes << " bytes." << std::endl;
 		}
 		
 		assert(workspace.Transforms_src.size == workspace.Transforms.size);
@@ -1410,21 +1559,409 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Transforms_src.handle, workspace.Transforms.handle, 1, &copy_region);
 	}
 
-	{ // mem barrier to make sure copies complete before rendering happens
-		VkMemoryBarrier memory_barrier{
+	{ // bind lights
+		size_t needed_bytes = light_instances.size() * sizeof(ObjectsPipeline::Light) + 16; // + 16 for the number of lights information
+		if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Lights_src.size < needed_bytes) {
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+			if (workspace.Lights_src.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.Lights_src));
+			}
+			if (workspace.Lights.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.Lights));
+			}
+
+			workspace.Lights_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+				Helpers::Mapped 
+			);
+			workspace.Lights = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buf, also going to have GPU into this mem
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+				Helpers::Unmapped 
+			);
+
+			VkDescriptorBufferInfo Lights_info{
+				.buffer = workspace.Lights.handle,
+				.offset = 0,
+				.range = workspace.Lights.size,
+			};
+
+			std::array< VkWriteDescriptorSet, 1 > writes{
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Lights_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Lights_info,
+				},
+			};
+
+			vkUpdateDescriptorSets(
+				rtg.device,
+				uint32_t(writes.size()), writes.data(),
+				0, nullptr
+			);
+
+			std::cout << "Re-allocated lights buffers to " << new_bytes << " bytes." << std::endl;
+		}
+		
+		assert(workspace.Lights_src.size == workspace.Lights.size);
+		assert(workspace.Lights_src.size >= needed_bytes);
+
+		{
+			assert(workspace.Lights_src.allocation.mapped);
+			uint32_t num_lights = (uint32_t)light_instances.size();
+			memcpy(workspace.Lights_src.allocation.data(), &num_lights, sizeof(uint32_t));
+			ObjectsPipeline::Light *out = reinterpret_cast< ObjectsPipeline::Light * >((char *)(workspace.Lights_src.allocation.data()) + 16);
+			
+			for (auto const &light : light_instances) {
+				*out = light;
+				++out;
+			}
+		}
+
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = needed_bytes,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
+	}
+
+	{ // wait for data to copy
+		VkMemoryBarrier barrier{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+			.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
 		};
 
-		vkCmdPipelineBarrier( workspace.command_buffer, 
-			VK_PIPELINE_STAGE_TRANSFER_BIT, // srcStageMask
-			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, // dstStageMask
-			0, // dependencyFlags
-			1, &memory_barrier, // memoryBarriers (count, data)
-			0, nullptr, // bufferMemoryBarriers (count, data)
-			0, nullptr // imageMemoryBarriers (count, data)
+		vkCmdPipelineBarrier(workspace.command_buffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+			0,
+			1, &barrier,
+			0, nullptr,
+			0, nullptr
 		);
+	}
+
+	if (shadow_map_views.size() != shadow_map_instances.size()) { // update shadow map containers
+		std::cout << "Rebuilding shadow map containers" << std::endl;
+		for (uint32_t i = 0; i < shadow_map_fbs.size(); ++i) {
+			vkDestroyFramebuffer(rtg.device, shadow_map_fbs[i], nullptr);
+			shadow_map_fbs[i] = VK_NULL_HANDLE;
+		}
+		shadow_map_fbs.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
+
+		for (uint32_t i = 0; i < shadow_map_views.size(); ++i) {
+			vkDestroyImageView(rtg.device, shadow_map_views[i], nullptr);
+			shadow_map_views[i] = VK_NULL_HANDLE;
+		}
+		shadow_map_views.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
+
+		if (shadow_map_sampler) vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
+		shadow_map_sampler = VK_NULL_HANDLE;
+
+		if (shadow_map_descriptor_pool) vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
+		shadow_map_descriptor = VK_NULL_HANDLE;
+
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) { // image view
+			{
+				VkImageViewCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.flags = 0,
+					.image = shadow_map_instances[i].handle,
+					.viewType = VK_IMAGE_VIEW_TYPE_2D,
+					.format = shadow_map_instances[i].format,
+					// .components auto initialized
+					.subresourceRange{
+						.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+						.baseMipLevel = 0,
+						.levelCount = 1,
+						.baseArrayLayer = 0,
+						.layerCount = 1,
+					},
+				};
+				VK( vkCreateImageView(rtg.device, &create_info, nullptr, &shadow_map_views[i]) );
+			}
+		}
+
+		{ // https://gamedev.net/forums/topic/717811-shadow-mapping-in-vulkan-issue/
+			VkSamplerCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+				.flags = 0,
+				.magFilter = VK_FILTER_LINEAR,
+				.minFilter = VK_FILTER_LINEAR,
+				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+				.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+				.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+				.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+				.mipLodBias = 0.f,
+				.anisotropyEnable  = VK_FALSE,
+				.maxAnisotropy = 0.f,
+				.compareEnable = VK_TRUE,
+				.compareOp = VK_COMPARE_OP_LESS,
+				.minLod = 0.f,
+				.maxLod = VK_LOD_CLAMP_NONE,
+				.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+				.unnormalizedCoordinates = VK_FALSE,
+			};
+			VK( vkCreateSampler(rtg.device, &create_info, nullptr, &shadow_map_sampler) );
+		}
+
+		{ // create the shadow map descriptor pool
+			uint32_t per_shadow = (uint32_t)shadow_map_instances.size();
+			per_shadow = 128;
+			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.descriptorCount = 1 * 1 * per_shadow, // one desc per set, on set per shadow_map
+				},
+			};
+
+			VkDescriptorPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+				.maxSets = 1, // one set
+				.poolSizeCount = uint32_t(pool_sizes.size()),
+				.pPoolSizes = pool_sizes.data(),
+			};
+
+			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &shadow_map_descriptor_pool) );
+		}
+
+		{
+			{ // allocate
+				VkDescriptorSetAllocateInfo alloc_info{
+					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+					.descriptorPool = shadow_map_descriptor_pool,
+					.descriptorSetCount = 1,
+					.pSetLayouts = &objects_pipeline.set9_Shadows,
+				};
+				
+				VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &shadow_map_descriptor) );
+			}
+
+			std::vector< VkDescriptorImageInfo > infos(shadow_map_instances.size());
+			std::vector< VkWriteDescriptorSet > writes(shadow_map_instances.size());
+			
+			for (Helpers::AllocatedImage const &image : shadow_map_instances) {
+				size_t i = &image - &shadow_map_instances[0];
+				infos[i] = VkDescriptorImageInfo{
+					.sampler = shadow_map_sampler,
+					.imageView = shadow_map_views[i],
+					.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+				};
+				writes[i] = VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = shadow_map_descriptor,
+					.dstBinding = 0,
+					.dstArrayElement = (uint32_t)i,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &infos[i],
+				};
+			}
+			
+			vkUpdateDescriptorSets(rtg.device, (uint32_t)(writes.size()), writes.data(), 0, nullptr);
+		}
+
+		{ // create fbs
+			for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+				VkFramebufferCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+					.renderPass = shadow_render_pass,
+					.attachmentCount = 1,
+					.pAttachments = &shadow_map_views[i],
+					.width = shadow_map_instances[i].extent.width,
+					.height = shadow_map_instances[i].extent.height,
+					.layers = 1,
+				};
+				VK( vkCreateFramebuffer(rtg.device, &create_info, nullptr, &shadow_map_fbs[i]) );
+			}
+		}
+	}
+
+	{
+		std::vector< VkImageMemoryBarrier > barriers;
+		barriers.reserve(shadow_map_instances.size());
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+			if ((light_instances[i].flags & 4) == 0) continue;
+			barriers.emplace_back(VkImageMemoryBarrier{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+				.srcAccessMask = VK_ACCESS_NONE,
+				.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.image = shadow_map_instances[i].handle,
+				.subresourceRange{
+					VK_IMAGE_ASPECT_DEPTH_BIT,
+					0,
+					1,
+					0,
+					1,
+				},
+			});
+		}
+
+		if (!barriers.empty()) {
+			vkCmdPipelineBarrier( workspace.command_buffer, 
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, // srcStageMask
+				VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, // dstStageMask
+				0, // dependencyFlags
+				0, nullptr, // memoryBarriers (count, data)
+				0, nullptr, // bufferMemoryBarriers (count, data)
+				(uint32_t)barriers.size(), barriers.data() // imageMemoryBarriers (count, data)
+			);
+		}
+	}
+
+	{ // shadow pass (depth only)
+		std::array< VkClearValue, 1 > clear_values {
+			VkClearValue{ .depthStencil{ .depth = 1.f, .stencil = 0 } },
+		};
+
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+			ObjectsPipeline::Light &light = light_instances[i];
+			if ((light.flags & 4) == 0) continue;
+
+			VkRenderPassBeginInfo begin_info {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = shadow_render_pass,
+				.framebuffer = shadow_map_fbs[i],
+				.renderArea {
+					.offset = {.x = 0, .y = 0},
+					.extent = shadow_map_instances[i].extent,
+				},
+				.clearValueCount = uint32_t(clear_values.size()),
+				.pClearValues = clear_values.data(),
+			};
+
+			vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
+			
+			{
+				VkRect2D scissor {
+					.offset = {.x = 0, .y = 0},
+					.extent = shadow_map_instances[i].extent,
+				};
+				vkCmdSetScissor(workspace.command_buffer, 0, 1, &scissor);
+			}		
+
+			{ // configure viewport transform
+				VkViewport viewport {
+					.x = 0.f,
+					.y = 0.f,
+					.width = float(shadow_map_instances[i].extent.width),
+					.height = float(shadow_map_instances[i].extent.height),
+					.minDepth = 0.f,
+					.maxDepth = 1.f,
+				};
+				vkCmdSetViewport(workspace.command_buffer, 0, 1, &viewport);
+			}
+
+
+			ShadowPipeline::Constants constants{
+				.LIGHT_CLIP_FROM_WORLD = light_instances[i].CLIP_FROM_WORLD,
+			};
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);
+			
+			vkCmdPushConstants(workspace.command_buffer, shadow_pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(constants), &constants);
+			
+			for (auto &[object_vertices, instances] : drawables) { // draw w objects pipeline
+
+				{ // use object_vertices (offset 0) as vert buf binding 0
+					std::array< VkBuffer, 1 > vertex_buffers{ object_vertices->handle };
+					std::array< VkDeviceSize, 1 > offsets{ 0 };
+					vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+				}
+
+				{ // bind World, Transforms, Camera descriptor sets
+					std::array< VkDescriptorSet, 1 > descriptor_sets {
+						workspace.Transforms_descriptors, // 1: Transforms
+					};
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer, // cmd buf
+						VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+						shadow_pipeline.layout, // pipeline layout
+						0, // first set
+						uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+						0, nullptr // dynamic offsets count, ptr
+					);
+				}
+				// cam descriptor set still bound but unused
+
+				// draw all instances
+				for (auto &inst : instances) {
+					uint32_t index = (uint32_t)(inst - &object_instances[0]);
+					vkCmdDraw(workspace.command_buffer, inst->vertices.count, 1, inst->vertices.first, index);
+				}
+			}
+
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
+	}
+
+	{ // mem barrier to make sure copies complete before rendering happens
+		std::vector< VkImageMemoryBarrier > barriers;
+		barriers.reserve(shadow_map_instances.size());
+		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) {
+			if ((light_instances[i].flags & 4) != 0) {;
+				barriers.emplace_back(VkImageMemoryBarrier{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+					.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+					.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+					.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.image = shadow_map_instances[i].handle,
+					.subresourceRange = { 
+						VK_IMAGE_ASPECT_DEPTH_BIT, 
+						0, 
+						1, 
+						0, 
+						1 
+					}
+				});
+			} else {
+				barriers.emplace_back(VkImageMemoryBarrier{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					.srcAccessMask = VK_ACCESS_NONE,
+					.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+					.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+					.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.image = shadow_map_instances[i].handle,
+					.subresourceRange = { 
+						VK_IMAGE_ASPECT_DEPTH_BIT, 
+						0, 
+						1, 
+						0, 
+						1 
+					}
+				});
+			}
+		}
+
+		if (!barriers.empty()) {
+			vkCmdPipelineBarrier( workspace.command_buffer, 
+				VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, // srcStageMask
+				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // dstStageMask
+				0, // dependencyFlags
+				0, nullptr, // memoryBarriers (count, data)
+				0, nullptr, // bufferMemoryBarriers (count, data)
+				(uint32_t)barriers.size(), barriers.data() // imageMemoryBarriers (count, data)
+			);
+		}
 	}
 
 	{ // render pass
@@ -1448,7 +1985,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		vkCmdBeginRenderPass(workspace.command_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
 	
 		float swap_aspect = (float)(rtg.swapchain_extent.width) / (float)(rtg.swapchain_extent.height);
-		float camera_aspect = 1.77778f;
+		float camera_aspect = aspect_ratio;
 		float width = (float)(rtg.swapchain_extent.width), height = (float)(rtg.swapchain_extent.height), x = 0, y = 0;
 		if (swap_aspect > camera_aspect) { // set scissor rect
 			width = rtg.swapchain_extent.width * (camera_aspect / swap_aspect);
@@ -1546,6 +2083,28 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				);
 			}
 
+			{ // bind lights
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					8, // eighth set
+					1, &workspace.Lights_descriptors, // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+			}
+
+			{ // bind shadow maps
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					9, // ninth set
+					1, &shadow_map_descriptor, // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
+			}
+
 			// cam descriptor set still bound but unused
 
 			// draw all instances
@@ -1621,6 +2180,8 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
+
+
 
 	//end rec
 	VK ( vkEndCommandBuffer(workspace.command_buffer) );
@@ -1809,6 +2370,7 @@ void Viewer::update(float dt) {
 	if (camera_mode == CameraMode::Scene) {
 		 //camera rotating around the origin:
 		auto scene_camera = selected_scene_camera->second;
+		aspect_ratio = scene_camera.aspect;
 		CLIP_FROM_WORLD = perspective(
 			scene_camera.vfov, //vfov
 			scene_camera.aspect, // rtg.swapchain_extent.width / float(rtg.swapchain_extent.height), //aspect
@@ -1817,9 +2379,10 @@ void Viewer::update(float dt) {
 		) * glm::inverse(scene_camera.transform.WORLD_FROM_LOCAL);
 	} else if (camera_mode == CameraMode::Free || camera_mode == CameraMode::Debug) {
 		OrbitCamera &user_camera = camera_mode == CameraMode::Free ? free_camera : debug_camera;
+		aspect_ratio = 1.7778f;
 		CLIP_FROM_WORLD = perspective(
 			user_camera.fov,
-			1.7778f, // aspect
+			aspect_ratio, // aspect
 			user_camera.near,
 			user_camera.far
 		) * orbit(

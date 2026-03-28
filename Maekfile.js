@@ -34,6 +34,7 @@ const common_objs = [
 // it returns the path to the output object file
 const main_objs = [
 	maek.CPP('Viewer.cpp'),
+	maek.CPP('Lights.cpp'),
 	maek.CPP('PosColVertex.cpp'),
 	maek.CPP('PosNorTexVertex.cpp'),
 	maek.CPP('PosNorTanTexVertex.cpp'),
@@ -59,13 +60,18 @@ const lines_shaders = [
 ];
 main_objs.push( maek.CPP('LinesPipeline.cpp', undefined, { depends:[...lines_shaders] } ) );
 
-const tonemap_includes = ['tonemap.glsl'];
+const shader_includes = ['tonemap.glsl', 'lights.glsl'];
 //uncomment to build objects shaders and pipeline:
 const objects_shaders = [
 	maek.GLSLC('objects.vert'),
-	maek.GLSLC('objects.frag', undefined, { depends:[...tonemap_includes] }),
+	maek.GLSLC('objects.frag', undefined, { depends:[...shader_includes] }),
 ];
 main_objs.push( maek.CPP('ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
+
+const shadows_shaders = [
+	maek.GLSLC('shadows.vert'),
+];
+main_objs.push( maek.CPP('ShadowPipeline.cpp', undefined, { depends:[...shadows_shaders] } ) );
 
 
 const main_exe = maek.LINK([...main_objs, ...common_objs], 'bin/viewer');
@@ -218,7 +224,7 @@ function custom_flags_and_rules() {
 			await maek.run(command, `${task.label}: compile`,
 				async () => {
 					return {
-						read:[glslFile],
+						read:[glslFile, ...options.depends],
 						written:[spirvFile]
 					};
 				}
