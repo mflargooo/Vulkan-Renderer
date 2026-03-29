@@ -129,6 +129,19 @@ struct Viewer : RTG::Application {
 		void destroy(RTG &);
 	} objects_pipeline;
 
+	struct TerrainPipeline {
+		VkDescriptorSetLayout set0_Mesh = VK_NULL_HANDLE;
+
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		using Vertex = PosNorTanTexVertex;
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &);
+		void destroy(RTG &);
+	} terrain_pipeline;
+
 	struct ShadowPipeline {
 		VkDescriptorSetLayout set0_Transforms = VK_NULL_HANDLE;
 

@@ -2058,51 +2058,64 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
 		}
 
+		vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
+		
+		{ // bind World, Transforms, Camera descriptor sets
+			std::array< VkDescriptorSet, 3 > descriptor_sets {
+				workspace.World_descriptors, // 0: World
+				workspace.Transforms_descriptors, // 1: Transforms
+				workspace.Camera_descriptors, // 2: Camera
+			};
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				0, // first set
+				uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+		}
+
+		{ // bind lights
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				8, // eighth set
+				1, &workspace.Lights_descriptors, // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+		}
+
+		{ // bind shadow maps
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				9, // ninth set
+				1, &shadow_map_descriptor, // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+		}
+
+		{
+			// bind envemap descriptor set
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				4, // fourth set
+				1, &env_map_descriptor, // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+		}
+
 		for (auto &[object_vertices, instances] : drawables) { // draw w objects pipeline
-			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
 
 			{ // use object_vertices (offset 0) as vert buf binding 0
 				std::array< VkBuffer, 1 > vertex_buffers{ object_vertices->handle };
 				std::array< VkDeviceSize, 1 > offsets{ 0 };
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
-			}
-
-			{ // bind World, Transforms, Camera descriptor sets
-				std::array< VkDescriptorSet, 3 > descriptor_sets {
-					workspace.World_descriptors, // 0: World
-					workspace.Transforms_descriptors, // 1: Transforms
-					workspace.Camera_descriptors, // 2: Camera
-				};
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer, // cmd buf
-					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
-					objects_pipeline.layout, // pipeline layout
-					0, // first set
-					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
-					0, nullptr // dynamic offsets count, ptr
-				);
-			}
-
-			{ // bind lights
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer, // cmd buf
-					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
-					objects_pipeline.layout, // pipeline layout
-					8, // eighth set
-					1, &workspace.Lights_descriptors, // descriptor sets count, ptr
-					0, nullptr // dynamic offsets count, ptr
-				);
-			}
-
-			{ // bind shadow maps
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer, // cmd buf
-					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
-					objects_pipeline.layout, // pipeline layout
-					9, // ninth set
-					1, &shadow_map_descriptor, // descriptor sets count, ptr
-					0, nullptr // dynamic offsets count, ptr
-				);
 			}
 
 			// cam descriptor set still bound but unused
@@ -2118,16 +2131,6 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					objects_pipeline.layout, // pipeline layout
 					3, // third set
 					1, &texture_descriptors[inst->material.albedo_id >= 0 ? inst->material.albedo_id : 0], // descriptor sets count, ptr
-					0, nullptr // dynamic offsets count, ptr
-				);
-
-				// bind envemap descriptor set
-				vkCmdBindDescriptorSets(
-					workspace.command_buffer, // cmd buf
-					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
-					objects_pipeline.layout, // pipeline layout
-					4, // fourth set
-					1, &env_map_descriptor, // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);
 

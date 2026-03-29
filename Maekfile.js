@@ -73,6 +73,11 @@ const shadows_shaders = [
 ];
 main_objs.push( maek.CPP('ShadowPipeline.cpp', undefined, { depends:[...shadows_shaders] } ) );
 
+const terrain_shaders = [
+	maek.GLSLC('terrain.comp'),
+];
+main_objs.push( maek.CPP('TerrainPipeline.cpp', undefined, { depends:[...terrain_shaders] } ) );
+
 
 const main_exe = maek.LINK([...main_objs, ...common_objs], 'bin/viewer');
 
