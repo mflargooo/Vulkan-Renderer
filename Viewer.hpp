@@ -130,7 +130,7 @@ struct Viewer : RTG::Application {
 	} objects_pipeline;
 
 	struct TerrainPipeline {
-		VkDescriptorSetLayout set0_Mesh = VK_NULL_HANDLE;
+		VkDescriptorSetLayout set0_Terrain = VK_NULL_HANDLE;
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
@@ -329,16 +329,19 @@ struct Viewer : RTG::Application {
 
 		// Terrain vertices, 16 per voxel
 		struct Chunk {
-			Helpers::AllocatedBuffer vertices; // local vertex positions
 			ObjectsPipeline::Transform transform; // transforms chunk-local to work space
+			Helpers::AllocatedBuffer vertices; // local vertex positions
+
+			// Holds VkDrawIndirectCommand info per voxel for indirect draw: https://vkguide.dev/docs/gpudriven/draw_indirect/
+			Helpers::AllocatedBuffer vertices_per_voxel; 
+
+			VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+			VkDescriptorSet descriptor = VK_NULL_HANDLE;
 		};
 		std::vector< Chunk > chunks;
 
-		// vertices_per_voxel[i] holds uint[16]
-		// vertices_per_voxel[i][j] = k <= 16 is how many vertices are defined
-		// 	for voxel[j] in chunk[i].
-		// 	i.e. chunks[i].vertices[j+0], ... chunks[i].vertices[j+k-1] are valid verts
-		std::vector< Helpers::AllocatedBuffer > vertices_per_voxel; 
+		using Vertex = PosNorTanTexVertex;
+
 	} terrain;
 
 	int load_scene(const std::string &file);

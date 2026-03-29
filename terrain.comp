@@ -11,8 +11,14 @@ layout(set=0, binding=0) buffer Vertices {
     Vertex vertices[]; // num voxels * (max tris per voxel 16-byte aligned)
 };
 
+struct VkDrawIndirectCommand {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+};
 layout(set=0, binding=1) buffer Voxels {
-    uint vertices_per_voxel[];
+    VkDrawIndirectCommand vertices_per_voxel[];
 };
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
@@ -48,7 +54,10 @@ void main() {
         vertices[16 * flat_g_voxel_start + i].texCoord = vec2(lut_quad[i].x, lut_quad[i].y);
     }
 
-    vertices_per_voxel[flat_g_voxel_start] = 6;
+    vertices_per_voxel[flat_g_voxel_start].vertexCount = 6;
+    vertices_per_voxel[flat_g_voxel_start].instanceCount = 1;
+    vertices_per_voxel[flat_g_voxel_start].firstVertex = 0;
+    vertices_per_voxel[flat_g_voxel_start].firstInstance = 0;
 }
 
 // mesh construction resources:

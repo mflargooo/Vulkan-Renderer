@@ -11,13 +11,19 @@ static uint32_t comp_code[] =
 void Viewer::TerrainPipeline::create(RTG &rtg) {
     VkShaderModule comp_module = rtg.helpers.create_shader_module(comp_code);
 
-    { // the set0_Mesh layout holds an array of Transform structures in a storage buffer used in the vertex shader
-        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+    { // the set0_Terrain layout holds an array of Transform structures in a storage buffer used in the vertex shader
+        std::array< VkDescriptorSetLayoutBinding, 2 > bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
+            },
+            VkDescriptorSetLayoutBinding{
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
             },
         };
 
@@ -27,12 +33,12 @@ void Viewer::TerrainPipeline::create(RTG &rtg) {
             .pBindings = bindings.data(),
         };
 
-        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_Mesh) );
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_Terrain) );
     }
 
     { // create pipeline layout
         std::array< VkDescriptorSetLayout, 1 > layouts{
-            set0_Mesh,
+            set0_Terrain,
         };
 
         VkPipelineLayoutCreateInfo create_info{
@@ -71,9 +77,9 @@ void Viewer::TerrainPipeline::create(RTG &rtg) {
 }
 
 void Viewer::TerrainPipeline::destroy(RTG &rtg) {
-    if (set0_Mesh != VK_NULL_HANDLE) {
-        vkDestroyDescriptorSetLayout(rtg.device, set0_Mesh, nullptr);
-        set0_Mesh = VK_NULL_HANDLE;
+    if (set0_Terrain != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set0_Terrain, nullptr);
+        set0_Terrain = VK_NULL_HANDLE;
     }
 
     if (layout != VK_NULL_HANDLE) {

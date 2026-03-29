@@ -174,6 +174,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	lines_pipeline.create(rtg, render_pass, 0);
 	objects_pipeline.create(rtg, render_pass, 0);
 	shadow_pipeline.create(rtg, shadow_render_pass, 0);
+	terrain_pipeline.create(rtg);
 
 	{ // create descriptor pool
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size()); // for easier-to-read counting
@@ -656,9 +657,168 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	}
 
 	// ------------------ run terrain computation ------------------
-	
-	
+	terrain.chunk_dims = glm::uvec3(32,32,32);
+	terrain.grid_dims = glm::uvec3(1,1,1);
 
+	VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
+	VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
+	
+	{
+		VkCommandPoolCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags = 0,
+		};
+		VK ( vkCreateCommandPool(rtg.device, &create_info, nullptr, &terrain_compute_cmd_pool) );
+	}
+
+	{
+		VkCommandBufferAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = terrain_compute_cmd_pool,
+			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1,
+		};
+		VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &terrain_compute_cmd_buffer) );
+	}
+
+	{ // rec
+		VkCommandBufferBeginInfo begin_info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = 0,
+		};
+		VK( vkBeginCommandBuffer(terrain_compute_cmd_buffer, &begin_info) );
+
+		vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
+
+		uint32_t num_chunks = terrain.grid_dims.x * terrain.grid_dims.y * terrain.grid_dims.z;
+		terrain.chunks.reserve(num_chunks);
+		for (uint32_t i = 0; i < num_chunks; ++i) {
+			terrain.chunks.emplace_back();
+
+			Terrain::Chunk &chunk = terrain.chunks.back();
+			chunk.vertices = rtg.helpers.create_buffer(
+				sizeof(Terrain::Vertex) * num_chunks * 16,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			);
+
+			chunk.vertices_per_voxel = rtg.helpers.create_buffer(
+				sizeof(VkDrawIndirectCommand) * num_chunks,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			);
+
+			{ // create the chunk descriptor pool
+				std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+					VkDescriptorPoolSize{
+						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+						.descriptorCount = 2 * 1, // two desc per set, on set per chunk
+					},
+				};
+
+				VkDescriptorPoolCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+					.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+					.maxSets = 1, // one set
+					.poolSizeCount = uint32_t(pool_sizes.size()),
+					.pPoolSizes = pool_sizes.data(),
+				};
+
+				VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &chunk.descriptor_pool) );
+			}
+
+			{
+				{ // allocate
+					VkDescriptorSetAllocateInfo alloc_info{
+						.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+						.descriptorPool = chunk.descriptor_pool,
+						.descriptorSetCount = 1,
+						.pSetLayouts = &terrain_pipeline.set0_Terrain,
+					};
+					
+					VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &chunk.descriptor) );
+				}
+
+				std::array< VkDescriptorBufferInfo, 2 > infos{
+					VkDescriptorBufferInfo{
+						.buffer = chunk.vertices.handle,
+						.offset = 0,
+						.range = chunk.vertices.size
+					},
+					VkDescriptorBufferInfo{
+						.buffer = chunk.vertices_per_voxel.handle,
+						.offset = 0,
+						.range = chunk.vertices_per_voxel.size
+					},
+				};
+
+				std::array< VkWriteDescriptorSet, 2 > writes{
+					VkWriteDescriptorSet{
+						.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+						.dstSet = chunk.descriptor,
+						.dstBinding = 0,
+						.dstArrayElement = 0,
+						.descriptorCount = 1,
+						.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+						.pBufferInfo = &infos[0],
+					},
+					VkWriteDescriptorSet{
+						.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+						.dstSet = chunk.descriptor,
+						.dstBinding = 1,
+						.dstArrayElement = 0,
+						.descriptorCount = 1,
+						.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+						.pBufferInfo = &infos[1],
+					},
+				};
+				
+				vkUpdateDescriptorSets(rtg.device, (uint32_t)(writes.size()), writes.data(), 0, nullptr);
+			}
+
+			{
+				std::array< VkDescriptorSet, 1 > descriptor_sets{
+					chunk.descriptor
+				};
+				vkCmdBindDescriptorSets(
+					terrain_compute_cmd_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_COMPUTE, // pipeline bind point
+					terrain_pipeline.layout, // pipeline layout
+					0, // first set
+					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);				
+			}
+
+			{ // dispatch
+				vkCmdDispatch(terrain_compute_cmd_buffer, 1, 1, 1);
+			}
+		}
+
+		VK( vkEndCommandBuffer(terrain_compute_cmd_buffer) );
+	}
+
+/*	{
+		VkSubmitInfo submit_info{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.waitSemaphoreCount = uint32_t(wait_semaphores.size()),
+			.pWaitSemaphores = wait_semaphores.data(),
+			.pWaitDstStageMask = wait_stages.data(),
+			.commandBufferCount = 1,
+			.pCommandBuffers = &terrain_compute_cmd_buffer,
+			.signalSemaphoreCount = uint32_t(signal_semaphores.size()),
+			.pSignalSemaphores = signal_semaphores.data(),
+		};
+
+		VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, render_params.workspace_available) );
+	}*/
+
+	vkFreeCommandBuffers(rtg.device, terrain_compute_cmd_pool, 1, &terrain_compute_cmd_buffer);
+	terrain_compute_cmd_buffer = VK_NULL_HANDLE;
+	vkDestroyCommandPool(rtg.device, terrain_compute_cmd_pool, nullptr);
+	terrain_compute_cmd_pool = VK_NULL_HANDLE;
 }
 
 Viewer::~Viewer() {
@@ -811,6 +971,7 @@ Viewer::~Viewer() {
 	lines_pipeline.destroy(rtg);
 	objects_pipeline.destroy(rtg);
 	shadow_pipeline.destroy(rtg);
+	terrain_pipeline.destroy(rtg);
 
 	// destroy command pool
 	if (command_pool != VK_NULL_HANDLE) {
