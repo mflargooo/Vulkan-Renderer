@@ -730,7 +730,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			);
 
 			chunk.vertices_per_voxel = rtg.helpers.create_buffer(
-				sizeof(VkDrawIndirectCommand) * voxels_per_chunk,
+				voxels_per_chunk * sizeof(VkDrawIndirectCommand),
 				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				Helpers::Unmapped
@@ -2790,6 +2790,9 @@ void Viewer::update(float dt) {
 		glm::mat4 WORLD_FROM_CLIP = (camera_mode == CameraMode::Debug) ? 
 			glm::inverse(debug_CLIP_FROM_WORLD) : glm::inverse(CLIP_FROM_WORLD);
 
+		for (auto &inst : terrain.chunks) {
+			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;
+		}
 
 		// create object instance from terrain chunks		
 		for (auto &inst : object_instances) {
