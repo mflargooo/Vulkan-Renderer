@@ -37,6 +37,13 @@ void Viewer::TerrainPipeline::create(RTG &rtg) {
     }
 
     { // create pipeline layout
+        std::array< VkPushConstantRange, 1 > ranges{
+            VkPushConstantRange{
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                .offset = 0,
+                .size = sizeof(Constants),
+            },
+        };
         std::array< VkDescriptorSetLayout, 1 > layouts{
             set0_Terrain,
         };
@@ -45,6 +52,8 @@ void Viewer::TerrainPipeline::create(RTG &rtg) {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = uint32_t(layouts.size()),
             .pSetLayouts = layouts.data(),
+            .pushConstantRangeCount = uint32_t(ranges.size()),
+            .pPushConstantRanges = ranges.data()
         };
 
         VK( vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout) );

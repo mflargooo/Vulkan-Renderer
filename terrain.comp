@@ -22,6 +22,10 @@ layout(set=0, binding=1) buffer Voxels {
     VkDrawIndirectCommand vertices_per_voxel[];
 };
 
+layout(push_constant) uniform Constants {
+    uint chunk_id;
+} pc;
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 vec3 lut_quad[6] = {
@@ -41,20 +45,25 @@ void main() {
     uvec3 local_voxel_id = gl_LocalInvocationID; // voxel id in local 8x8x8 workgroup
     uvec3 terrain_dims = chunk_dims * workgroup_dims; // full chunk dims
 
-    uint flat_g_voxel_start = 
-        global_voxel_id.x * (terrain_dims.y * terrain_dims.z) +
-        global_voxel_id.y * terrain_dims.z +
-        global_voxel_id.z;
+    uint flat_l_voxel_start = 
+        local_voxel_id.x * (chunk_dims.y * chunk_dims.z) +
+        local_voxel_id.y * chunk_dims.z +
+        local_voxel_id.z;
     uint vertex_count = 6;
+
+    uint chunk_index =
+        gl_WorkGroupID.x * (workgroup_dims.y * workgroup_dims.z) +
+        gl_WorkGroupID.y * workgroup_dims.z +
+        gl_WorkGroupID.z;
 
     for (uint i = 0; i < 6; ++i) {
         // 16 consecutive vertices belong to this id
-        uint byte_start = 12 * (16 * flat_g_voxel_start + i);
+        uint byte_start = 12 * (16 * flat_l_voxel_start + i);
 
         // position
-        vertices[byte_start + 0] = lut_quad[i].x;
-        vertices[byte_start + 1] = lut_quad[i].y;
-        vertices[byte_start + 2] = lut_quad[i].z;
+        vertices[byte_start + 0] = lut_quad[i].x + float(local_voxel_id.x);
+        vertices[byte_start + 1] = lut_quad[i].y + float(local_voxel_id.y);
+        vertices[byte_start + 2] = lut_quad[i].z + float(local_voxel_id.z);
 
         // normal
         vertices[byte_start + 3] = 0.0;
@@ -72,10 +81,10 @@ void main() {
         vertices[byte_start + 11] = lut_quad[i].y * 0.5 + 0.5;
     }
 
-    vertices_per_voxel[flat_g_voxel_start].vertexCount = vertex_count;
-    vertices_per_voxel[flat_g_voxel_start].instanceCount = 1;
-    vertices_per_voxel[flat_g_voxel_start].firstVertex = 16 * flat_g_voxel_start;
-    vertices_per_voxel[flat_g_voxel_start].firstInstance = 0;
+    vertices_per_voxel[flat_l_voxel_start].vertexCount = vertex_count;
+    vertices_per_voxel[flat_l_voxel_start].instanceCount = 1;
+    vertices_per_voxel[flat_l_voxel_start].firstVertex = 16 * flat_l_voxel_start;
+    vertices_per_voxel[flat_l_voxel_start].firstInstance = pc.chunk_id;
 }
 
 // mesh construction resources:

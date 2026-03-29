@@ -658,8 +658,8 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 	// ------------------ run terrain computation ------------------
 
-	terrain.chunk_dims = glm::uvec3(32,32,32);
-	terrain.grid_dims = glm::uvec3(1,1,1);
+	terrain.chunk_dims = glm::uvec3(8,8,8);
+	terrain.grid_dims = glm::uvec3(4,4,1);
 
 	VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 	VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
@@ -736,8 +736,14 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 				Helpers::Unmapped
 			);
 
+			uint32_t p = i / (terrain.grid_dims.y * terrain.grid_dims.z);
+			uint32_t q = (i / terrain.grid_dims.z) % (terrain.grid_dims.y);
+			uint32_t r = i % terrain.grid_dims.z; 
 			chunk.transform = ObjectsPipeline::Transform {
-				.WORLD_FROM_LOCAL = glm::mat4(1.f),
+				.WORLD_FROM_LOCAL = glm::translate(
+					glm::mat4(1.f), 
+					 glm::vec3(p, q, r) * glm::vec3(terrain.chunk_dims)
+				),
 				.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.f),
 			};
 
@@ -802,6 +808,14 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
 					0, nullptr // dynamic offsets count, ptr
 				);				
+			}
+
+			{
+				TerrainPipeline::Constants constants{
+					.chunk_id = i,
+				};
+
+				vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
 			}
 
 			{ // dispatch
@@ -2374,28 +2388,21 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			);
 		}
 
-		{ // bind World, Transforms, Camera descriptor sets
-			std::array< VkDescriptorSet, 3 > descriptor_sets {
-				workspace.World_descriptors, // 0: World
-				terrain.Transforms_descriptors, // 1: Transforms
-				workspace.Camera_descriptors, // 2: Camera
-			};
-			vkCmdBindDescriptorSets(
-				workspace.command_buffer, // cmd buf
-				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
-				objects_pipeline.layout, // pipeline layout
-				0, // first set
-				uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
-				0, nullptr // dynamic offsets count, ptr
-			);
-		}
-
-		uint32_t voxels_per_chunk = terrain.chunk_dims.x * terrain.chunk_dims.y * terrain.chunk_dims.z;
-		for (auto &chunk : terrain.chunks) {
-			{
-				std::array< VkBuffer, 1 > vertex_buffers{ chunk.vertices.handle };
-				std::array< VkDeviceSize, 1 > offsets{ 0 };
-				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+		{
+			{ // bind World, Transforms, Camera descriptor sets
+				std::array< VkDescriptorSet, 3 > descriptor_sets {
+					workspace.World_descriptors, // 0: World
+					terrain.Transforms_descriptors, // 1: Transforms
+					workspace.Camera_descriptors, // 2: Camera
+				};
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer, // cmd buf
+					VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+					objects_pipeline.layout, // pipeline layout
+					0, // first set
+					uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+					0, nullptr // dynamic offsets count, ptr
+				);
 			}
 
 			// bind texture descriptor set
@@ -2451,7 +2458,16 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// push constants type
 			vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ObjectsPipeline::Constants), &constants);
 
-			vkCmdDrawIndirect(workspace.command_buffer, chunk.vertices_per_voxel.handle, 0, voxels_per_chunk, sizeof(VkDrawIndirectCommand));
+			uint32_t voxels_per_chunk = terrain.chunk_dims.x * terrain.chunk_dims.y * terrain.chunk_dims.z;
+			for (auto &chunk : terrain.chunks) {
+				{
+					std::array< VkBuffer, 1 > vertex_buffers{ chunk.vertices.handle };
+					std::array< VkDeviceSize, 1 > offsets{ 0 };
+					vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+				}
+
+				vkCmdDrawIndirect(workspace.command_buffer, chunk.vertices_per_voxel.handle, 0, voxels_per_chunk, sizeof(VkDrawIndirectCommand));
+			}
 		}
 
 		{ // bind World, Transforms, Camera descriptor sets

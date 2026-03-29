@@ -132,6 +132,10 @@ struct Viewer : RTG::Application {
 	struct TerrainPipeline {
 		VkDescriptorSetLayout set0_Terrain = VK_NULL_HANDLE;
 
+		struct Constants {
+			uint32_t chunk_id;
+		};
+
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
 		using Vertex = PosNorTanTexVertex;
