@@ -304,6 +304,7 @@ struct Viewer : RTG::Application {
 		Material material;
 	};
 	std::vector< ObjectInstance > object_instances;
+	std::vector< ObjectInstance > chunk_instances;
 
 	std::unordered_map< std::string, ObjectsPipeline::Light > lights;
 	std::vector< ObjectsPipeline::Light > light_instances;
@@ -335,13 +336,16 @@ struct Viewer : RTG::Application {
 			// Holds VkDrawIndirectCommand info per voxel for indirect draw: https://vkguide.dev/docs/gpudriven/draw_indirect/
 			Helpers::AllocatedBuffer vertices_per_voxel; 
 
-			VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
 			VkDescriptorSet descriptor = VK_NULL_HANDLE;
 		};
 		std::vector< Chunk > chunks;
 
 		using Vertex = PosNorTanTexVertex;
 
+		VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+		Helpers::AllocatedBuffer Transforms_src;
+		Helpers::AllocatedBuffer Transforms;
+		VkDescriptorSet Transforms_descriptors = VK_NULL_HANDLE;
 	} terrain;
 
 	int load_scene(const std::string &file);

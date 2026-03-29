@@ -532,9 +532,9 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 	
-	assert(env_maps.size() == 2); // lambertian and pbr
-	// make cubemap views 0 - lambertian, 1 - mirror, 2 - env, 3 - pbr
+	// make cubemap views 0 - lambertian, -1 - pbr
 	{
+		assert(env_maps.size() == 2); // lambertian and pbr
 		{ // make image views for the env_maps
 			env_map_views.reserve(3);
 			// lambertian
@@ -657,6 +657,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	}
 
 	// ------------------ run terrain computation ------------------
+
 	terrain.chunk_dims = glm::uvec3(32,32,32);
 	terrain.grid_dims = glm::uvec3(1,1,1);
 
@@ -691,49 +692,60 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
 
 		uint32_t num_chunks = terrain.grid_dims.x * terrain.grid_dims.y * terrain.grid_dims.z;
+		uint32_t voxels_per_chunk = terrain.chunk_dims.x * terrain.chunk_dims.y * terrain.chunk_dims.z;
+
+		{ // create the descriptor pools
+			std::array< VkDescriptorPoolSize, 2 > pool_sizes{
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.descriptorCount = 2 * 1 * num_chunks, // two desc per set, one set per chunk, num_chunks per terrain
+				},
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.descriptorCount = 1, // one transform desc per terrain terrain
+				},
+			};
+
+			VkDescriptorPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+				.maxSets = num_chunks+1, // one set
+				.poolSizeCount = uint32_t(pool_sizes.size()),
+				.pPoolSizes = pool_sizes.data(),
+			};
+
+			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain.descriptor_pool) );
+		}
+		
 		terrain.chunks.reserve(num_chunks);
 		for (uint32_t i = 0; i < num_chunks; ++i) {
 			terrain.chunks.emplace_back();
 
 			Terrain::Chunk &chunk = terrain.chunks.back();
 			chunk.vertices = rtg.helpers.create_buffer(
-				sizeof(Terrain::Vertex) * num_chunks * 16,
-				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				voxels_per_chunk * 16 * sizeof(Terrain::Vertex),
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				Helpers::Unmapped
 			);
 
 			chunk.vertices_per_voxel = rtg.helpers.create_buffer(
-				sizeof(VkDrawIndirectCommand) * num_chunks,
-				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				sizeof(VkDrawIndirectCommand) * voxels_per_chunk,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 				Helpers::Unmapped
 			);
 
-			{ // create the chunk descriptor pool
-				std::array< VkDescriptorPoolSize, 1 > pool_sizes{
-					VkDescriptorPoolSize{
-						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-						.descriptorCount = 2 * 1, // two desc per set, on set per chunk
-					},
-				};
-
-				VkDescriptorPoolCreateInfo create_info{
-					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-					.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-					.maxSets = 1, // one set
-					.poolSizeCount = uint32_t(pool_sizes.size()),
-					.pPoolSizes = pool_sizes.data(),
-				};
-
-				VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &chunk.descriptor_pool) );
-			}
+			chunk.transform = ObjectsPipeline::Transform {
+				.WORLD_FROM_LOCAL = glm::mat4(1.f),
+				.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.f),
+			};
 
 			{
 				{ // allocate
 					VkDescriptorSetAllocateInfo alloc_info{
 						.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-						.descriptorPool = chunk.descriptor_pool,
+						.descriptorPool = terrain.descriptor_pool,
 						.descriptorSetCount = 1,
 						.pSetLayouts = &terrain_pipeline.set0_Terrain,
 					};
@@ -793,32 +805,40 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			}
 
 			{ // dispatch
-				vkCmdDispatch(terrain_compute_cmd_buffer, 1, 1, 1);
+				vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_dims.x / 8, terrain.chunk_dims.y / 8, terrain.chunk_dims.z / 8);
 			}
 		}
 
 		VK( vkEndCommandBuffer(terrain_compute_cmd_buffer) );
 	}
 
-/*	{
+	{
 		VkSubmitInfo submit_info{
 			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-			.waitSemaphoreCount = uint32_t(wait_semaphores.size()),
-			.pWaitSemaphores = wait_semaphores.data(),
-			.pWaitDstStageMask = wait_stages.data(),
 			.commandBufferCount = 1,
 			.pCommandBuffers = &terrain_compute_cmd_buffer,
-			.signalSemaphoreCount = uint32_t(signal_semaphores.size()),
-			.pSignalSemaphores = signal_semaphores.data(),
 		};
 
-		VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, render_params.workspace_available) );
-	}*/
+		VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, VK_NULL_HANDLE) );
+	}
+
+	VK( vkQueueWaitIdle(rtg.graphics_queue) );
 
 	vkFreeCommandBuffers(rtg.device, terrain_compute_cmd_pool, 1, &terrain_compute_cmd_buffer);
 	terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 	vkDestroyCommandPool(rtg.device, terrain_compute_cmd_pool, nullptr);
 	terrain_compute_cmd_pool = VK_NULL_HANDLE;
+
+	{ // allocate descriptor set for terrain Transforms descriptor in preparation for rendering
+		VkDescriptorSetAllocateInfo alloc_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.descriptorPool = terrain.descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &objects_pipeline.set1_Transforms,
+		};
+
+		VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &terrain.Transforms_descriptors) );
+	}
 }
 
 Viewer::~Viewer() {
@@ -909,6 +929,28 @@ Viewer::~Viewer() {
 		rtg.helpers.destroy_buffer(std::move(object_vertices));
 	}
 
+	if (terrain.descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, terrain.descriptor_pool, nullptr);
+		terrain.descriptor_pool = VK_NULL_HANDLE;
+	}
+	for (auto &chunk : terrain.chunks) {
+		if (chunk.vertices_per_voxel.handle) {
+			rtg.helpers.destroy_buffer(std::move(chunk.vertices_per_voxel));
+		}
+		if (chunk.vertices.handle) {
+			rtg.helpers.destroy_buffer(std::move(chunk.vertices));
+		}
+	}
+
+	if (terrain.Transforms_src.handle != VK_NULL_HANDLE) {
+		rtg.helpers.destroy_buffer(std::move(terrain.Transforms_src));
+	}
+	if (terrain.Transforms.handle != VK_NULL_HANDLE) {
+		rtg.helpers.destroy_buffer(std::move(terrain.Transforms));
+	}
+
+	terrain.chunks.clear();
+
 	scene_vertices.clear();
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE) {
@@ -950,7 +992,6 @@ Viewer::~Viewer() {
 			rtg.helpers.destroy_buffer(std::move(workspace.World));
 		}
 		// World_descriptors freed when pool is destroyed
-
 		if (workspace.Transforms_src.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.Transforms_src));
 		}
@@ -1437,8 +1478,6 @@ int Viewer::load_scene(const std::string &filename) {
 };
 
 void Viewer::parse_scene_graph() { // populate all object instances
-	object_instances.clear();
-	light_instances.clear();
 	uint32_t num_lights = 0;
 
 	struct Element {
@@ -1796,6 +1835,82 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			.size = needed_bytes,
 		};
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
+	}
+
+	if (!terrain.chunks.empty()) {
+		// [re-]allocate terrain bufs in needed
+		size_t needed_bytes = terrain.chunks.size() * sizeof(ObjectsPipeline::Transform);
+		if (terrain.Transforms_src.handle == VK_NULL_HANDLE || terrain.Transforms_src.size < needed_bytes) {
+			// round to next mult of 4k to avoid realloc continuously if vert count grows slowly
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+			if (terrain.Transforms_src.handle) {
+				rtg.helpers.destroy_buffer(std::move(terrain.Transforms_src));
+			}
+			if (terrain.Transforms.handle) {
+				rtg.helpers.destroy_buffer(std::move(terrain.Transforms));
+			}
+
+			terrain.Transforms_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // going to have GPU copy from this mem
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible mem, coherent (no special sync needed)
+				Helpers::Mapped // get a pointer to the mem
+			);
+			terrain.Transforms = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buf, also going to have GPU into this mem
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, // GPU-local mem
+				Helpers::Unmapped // don't get a pointer to the mem
+			);
+
+			// update descriptor set
+			VkDescriptorBufferInfo Transforms_info{
+				.buffer = terrain.Transforms.handle,
+				.offset = 0,
+				.range = terrain.Transforms.size,
+			};
+
+			std::array< VkWriteDescriptorSet, 1 > writes{
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = terrain.Transforms_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Transforms_info,
+				},
+			};
+
+			vkUpdateDescriptorSets(
+				rtg.device,
+				uint32_t(writes.size()), writes.data(), // descriptorWrites count, data
+				0, nullptr // descriptorCopies count, data
+			);
+
+			std::cout << "Re-allocated terrain transforms buffers to " << new_bytes << " bytes." << std::endl;
+		}
+		
+		assert(terrain.Transforms_src.size == terrain.Transforms.size);
+		assert(terrain.Transforms_src.size >= needed_bytes);
+		
+		{ // copy transforms into Transforms_src
+			assert(terrain.Transforms_src.allocation.mapped);
+			ObjectsPipeline::Transform *out = reinterpret_cast< ObjectsPipeline::Transform* >(terrain.Transforms_src.allocation.data()); // strict aliasing violation, but doesnt matter
+
+			for (Terrain::Chunk const &inst : terrain.chunks) {
+				*out = inst.transform;
+				++out;
+			}
+		}
+
+		// device-side copy from lines_vertices_src -> lines_vertices
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = needed_bytes,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, terrain.Transforms_src.handle, terrain.Transforms.handle, 1, &copy_region);
 	}
 
 	{ // wait for data to copy
@@ -2225,22 +2340,6 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
 		
-		{ // bind World, Transforms, Camera descriptor sets
-			std::array< VkDescriptorSet, 3 > descriptor_sets {
-				workspace.World_descriptors, // 0: World
-				workspace.Transforms_descriptors, // 1: Transforms
-				workspace.Camera_descriptors, // 2: Camera
-			};
-			vkCmdBindDescriptorSets(
-				workspace.command_buffer, // cmd buf
-				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
-				objects_pipeline.layout, // pipeline layout
-				0, // first set
-				uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
-				0, nullptr // dynamic offsets count, ptr
-			);
-		}
-
 		{ // bind lights
 			vkCmdBindDescriptorSets(
 				workspace.command_buffer, // cmd buf
@@ -2271,6 +2370,102 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				objects_pipeline.layout, // pipeline layout
 				4, // fourth set
 				1, &env_map_descriptor, // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+		}
+
+		{ // bind World, Transforms, Camera descriptor sets
+			std::array< VkDescriptorSet, 3 > descriptor_sets {
+				workspace.World_descriptors, // 0: World
+				terrain.Transforms_descriptors, // 1: Transforms
+				workspace.Camera_descriptors, // 2: Camera
+			};
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				0, // first set
+				uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+		}
+
+		uint32_t voxels_per_chunk = terrain.chunk_dims.x * terrain.chunk_dims.y * terrain.chunk_dims.z;
+		for (auto &chunk : terrain.chunks) {
+			{
+				std::array< VkBuffer, 1 > vertex_buffers{ chunk.vertices.handle };
+				std::array< VkDeviceSize, 1 > offsets{ 0 };
+				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+			}
+
+			// bind texture descriptor set
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				3, // third set
+				1, &texture_descriptors[0], // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+
+			// bind normal_map descriptor set
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				5, // fifth set
+				1, &texture_descriptors[0], // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+
+			// bind roughness_map descriptor set
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				6, // sixth set
+				1, &texture_descriptors[0], // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+
+			// bind metalness_map descriptor set
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				7, // seventh set
+				1, &texture_descriptors[0], // descriptor sets count, ptr
+				0, nullptr // dynamic offsets count, ptr
+			);
+
+			ObjectsPipeline::Constants constants = {
+				.material_type = 0,
+				.exposure = rtg.configuration.exposure,
+				.tonemap = rtg.configuration.tonemap,
+				.has_normal_map = int32_t(0),
+				.has_roughness_map = int32_t(0),
+				.has_metalness_map = int32_t(0),
+				.mip_levels = mip_levels,
+			};
+
+			// push constants type
+			vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ObjectsPipeline::Constants), &constants);
+
+			vkCmdDrawIndirect(workspace.command_buffer, chunk.vertices_per_voxel.handle, 0, voxels_per_chunk, sizeof(VkDrawIndirectCommand));
+		}
+
+		{ // bind World, Transforms, Camera descriptor sets
+			std::array< VkDescriptorSet, 3 > descriptor_sets {
+				workspace.World_descriptors, // 0: World
+				workspace.Transforms_descriptors, // 1: Transforms
+				workspace.Camera_descriptors, // 2: Camera
+			};
+			vkCmdBindDescriptorSets(
+				workspace.command_buffer, // cmd buf
+				VK_PIPELINE_BIND_POINT_GRAPHICS, // pipeline bind point
+				objects_pipeline.layout, // pipeline layout
+				0, // first set
+				uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
 				0, nullptr // dynamic offsets count, ptr
 			);
 		}
@@ -2532,6 +2727,8 @@ void Viewer::update(float dt) {
 	}
 
 	{ // iterate through scene graph
+		object_instances.clear();
+		light_instances.clear();
 		parse_scene_graph();
 	}
 
@@ -2592,7 +2789,9 @@ void Viewer::update(float dt) {
 
 		glm::mat4 WORLD_FROM_CLIP = (camera_mode == CameraMode::Debug) ? 
 			glm::inverse(debug_CLIP_FROM_WORLD) : glm::inverse(CLIP_FROM_WORLD);
-		
+
+
+		// create object instance from terrain chunks		
 		for (auto &inst : object_instances) {
 			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;
 

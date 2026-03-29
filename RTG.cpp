@@ -427,7 +427,11 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 				});
 			}
 
-			VkPhysicalDeviceVulkan12Features pd_features{ // for shadow maps
+			VkPhysicalDeviceFeatures vk_features{
+				.multiDrawIndirect = VK_TRUE,
+			};
+
+			VkPhysicalDeviceVulkan12Features vk12_features{ // for shadow maps
 				.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 				.shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
 				.runtimeDescriptorArray = VK_TRUE,
@@ -435,7 +439,7 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 
 			VkDeviceCreateInfo create_info{
 				.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-				.pNext = &pd_features,
+				.pNext = &vk12_features,
 				.queueCreateInfoCount = uint32_t(queue_create_infos.size()),
 				.pQueueCreateInfos = queue_create_infos.data(),
 
@@ -447,7 +451,7 @@ RTG::RTG(Configuration const &configuration_) : helpers(*this) {
 				.ppEnabledExtensionNames = device_extensions.data(),
 
 				// pass a pointer to a VkPhysicalDeviceFeatures to request specific features (e.g thick lines)
-				.pEnabledFeatures = nullptr,
+				.pEnabledFeatures = &vk_features,
 			};
 
 			VK( vkCreateDevice(physical_device, &create_info, nullptr, &device) );
