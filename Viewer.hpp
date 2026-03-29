@@ -323,6 +323,23 @@ struct Viewer : RTG::Application {
 	std::unordered_map< std::string, uint32_t > tex_ids;
 	std::unordered_map< std::string, uint32_t > cubemap_ids;
 
+	struct Terrain {
+		glm::uvec3 grid_dims = glm::uvec3(0); // grid of chunks
+		glm::uvec3 chunk_dims = glm::uvec3(0);
+
+		// Terrain vertices, 16 per voxel
+		struct Chunk {
+			Helpers::AllocatedBuffer vertices; // local vertex positions
+			ObjectsPipeline::Transform transform; // transforms chunk-local to work space
+		};
+		std::vector< Chunk > chunks;
+
+		// vertices_per_voxel[i] holds uint[16]
+		// vertices_per_voxel[i][j] = k <= 16 is how many vertices are defined
+		// 	for voxel[j] in chunk[i].
+		// 	i.e. chunks[i].vertices[j+0], ... chunks[i].vertices[j+k-1] are valid verts
+		std::vector< Helpers::AllocatedBuffer > vertices_per_voxel; 
+	} terrain;
 
 	int load_scene(const std::string &file);
 	void parse_scene_graph();

@@ -653,8 +653,12 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 		}
-
 	}
+
+	// ------------------ run terrain computation ------------------
+	
+	
+
 }
 
 Viewer::~Viewer() {

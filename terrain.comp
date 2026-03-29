@@ -1,5 +1,55 @@
 #version 450
 
+struct Vertex {
+    vec3 position;
+    vec3 normal;
+    vec4 tangent;
+    vec2 texCoord;
+};
+
+layout(set=0, binding=0) buffer Vertices {
+    Vertex vertices[]; // num voxels * (max tris per voxel 16-byte aligned)
+};
+
+layout(set=0, binding=1) buffer Voxels {
+    uint vertices_per_voxel[];
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+vec3 lut_quad[6] = {
+    vec3(-0.5, -0.5, 0.0),
+    vec3(0.5, -0.5, 0.0),
+    vec3(0.5, 0.5, 0.0),
+
+    vec3(-0.5, -0.5, 0.0),
+    vec3(0.5, 0.5, 0.0),
+    vec3(0.0, 0.5, 0.0),
+};
+
 void main() {
-    
+    uvec3 workgroup_dims = gl_NumWorkGroups; // grid of chunks
+    uvec3 chunk_dims = gl_WorkGroupSize; // grid of voxels
+    uvec3 global_voxel_id = gl_GlobalInvocationID; // voxel id in full terrain
+    uvec3 local_voxel_id = gl_LocalInvocationID; // voxel id in local 8x8x8 chunk
+    uvec3 terrain_dims = chunk_dims * workgroup_dims; // full terrain dims
+
+    uint flat_g_voxel_start = 
+        global_voxel_id.x * (terrain_dims.y * terrain_dims.z) +
+        global_voxel_id.y * terrain_dims.z +
+        global_voxel_id.z;
+    uint count = 0;
+
+    for (uint i = 0; i < 6; ++i) {
+        // 16 consecutive vertices belong to this id
+        vertices[16 * flat_g_voxel_start + i].position = global_voxel_id * lut_quad[i];
+        vertices[16 * flat_g_voxel_start + i].normal = vec3(0.0, 0.0, 1.0);
+        vertices[16 * flat_g_voxel_start + i].tangent = vec4(1.0, 0.0, 0.0, 1.0);
+        vertices[16 * flat_g_voxel_start + i].texCoord = vec2(lut_quad[i].x, lut_quad[i].y);
+    }
+
+    vertices_per_voxel[flat_g_voxel_start] = 6;
 }
+
+// mesh construction resources:
+// https://computergraphics.stackexchange.com/questions/1614/opengl-compute-shader-generating-triangle-indices-how-to-get-correct-element-co
