@@ -658,7 +658,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 	// ------------------ run terrain computation ------------------
 
-	terrain.chunk_dims = glm::uvec3(8,8,8);
+	terrain.chunk_dims = glm::uvec3(32,32,32);
 	terrain.grid_dims = glm::uvec3(4,4,1);
 
 	VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
@@ -742,7 +742,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			chunk.transform = ObjectsPipeline::Transform {
 				.WORLD_FROM_LOCAL = glm::translate(
 					glm::mat4(1.f), 
-					 glm::vec3(p, q, r) * glm::vec3(terrain.chunk_dims)
+					 glm::vec3(p, q, r) * glm::vec3(terrain.grid_dims) * 2.f
 				),
 				.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.f),
 			};
