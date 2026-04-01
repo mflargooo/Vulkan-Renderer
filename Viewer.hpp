@@ -133,8 +133,10 @@ struct Viewer : RTG::Application {
 		VkDescriptorSetLayout set0_Terrain = VK_NULL_HANDLE;
 
 		struct Constants {
+			glm::uvec3 chunk_center;
 			uint32_t chunk_id;
 		};
+		static_assert(sizeof(Constants) == 4+4*3, "TerrainPipeline::Constants is packed");
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 

@@ -1,5 +1,7 @@
 #version 450
 
+#include "mc_lut.glsl"
+
 /*
 struct Vertex {
     vec3 position;
@@ -9,7 +11,7 @@ struct Vertex {
 };
 */
 layout(set=0, binding=0) buffer Vertices {
-    float vertices[]; // num voxels * (max tris per voxel 16-byte aligned)
+    float vertices[]; // num voxels * (max 16 verts (<= 5 tris) per voxel)
 };
 
 struct VkDrawIndirectCommand {
@@ -23,68 +25,76 @@ layout(set=0, binding=1) buffer Voxels {
 };
 
 layout(push_constant) uniform Constants {
+    uvec3 chunk_center;
     uint chunk_id;
 } pc;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
-vec3 lut_quad[6] = {
-    vec3(-1.0, -1.0, 0.0),
-    vec3(1.0, -1.0, 0.0),
-    vec3(1.0, 1.0, 0.0),
-
-    vec3(-1.0, -1.0, 0.0),
-    vec3(1.0, 1.0, 0.0),
-    vec3(-1.0, 1.0, 0.0),
-};
-
+// inspired by https://www.youtube.com/watch?v=eKN8vz9YZEQ
 void main() {
-    uvec3 workgroup_dims = gl_NumWorkGroups; // grid of chunks
-    uvec3 chunk_dims = gl_WorkGroupSize; // grid of voxels
     uvec3 global_voxel_id = gl_GlobalInvocationID; // voxel id in full chunk
     uvec3 local_voxel_id = gl_LocalInvocationID; // voxel id in local 8x8x8 workgroup
-    uvec3 terrain_dims = chunk_dims * workgroup_dims; // full chunk dims
+    uvec3 chunk_dims = gl_WorkGroupSize * gl_NumWorkGroups; // dimension of chunk in voxels
 
-    uint flat_l_voxel_start = 
-        local_voxel_id.x * (chunk_dims.y * chunk_dims.z) +
-        local_voxel_id.y * chunk_dims.z +
-        local_voxel_id.z;
-    uint vertex_count = 6;
+    uint voxel_in_chunk_start = 
+        global_voxel_id.x * (chunk_dims.y * chunk_dims.z) +
+        global_voxel_id.y * chunk_dims.z +
+        global_voxel_id.z;
 
-    uint chunk_index =
-        gl_WorkGroupID.x * (workgroup_dims.y * workgroup_dims.z) +
-        gl_WorkGroupID.y * workgroup_dims.z +
-        gl_WorkGroupID.z;
+    vec3 voxel_pos_chunk_space = vec3(global_voxel_id);
+    vec3 voxel_pos_world_space = voxel_pos_chunk_space + vec3(pc.chunk_center);
+    uint cube_case = compute_cube_case(voxel_pos_world_space);
+    
+    uint vertex_count = 0;
+    for (uint i = 0; i < 15; i+=3) { // place triangles
+        int e0 = tri_look_up(cube_case, i);
+        if (e0 == -1) break;
+        int e1 = tri_look_up(cube_case, i+1);
+        int e2 = tri_look_up(cube_case, i+2);
 
-    for (uint i = 0; i < 6; ++i) {
-        // 16 consecutive vertices belong to this id
-        uint byte_start = 12 * (16 * flat_l_voxel_start + i);
+        int edges[3] = { e0, e1, e2 };
+        for (uint j = 0; j < 3; ++j) {
+            int e = edges[j];
+            uint u = edge_vertex_ids[e][0];
+            uint v = edge_vertex_ids[e][1];
 
-        // position
-        vertices[byte_start + 0] = lut_quad[i].x + float(local_voxel_id.x);
-        vertices[byte_start + 1] = lut_quad[i].y + float(local_voxel_id.y);
-        vertices[byte_start + 2] = lut_quad[i].z + float(local_voxel_id.z);
+            vec3 pu = voxel_pos_chunk_space + vec3(corners[u]);
+            vec3 pv = voxel_pos_chunk_space + vec3(corners[v]);
 
-        // normal
-        vertices[byte_start + 3] = 0.0;
-        vertices[byte_start + 4] = 0.0;
-        vertices[byte_start + 5] = 1.0;
+            float t = 0.5;
+            vec3 p = mix(pu, pv, t);
 
-        // tangent
-        vertices[byte_start + 6] = 1.0;
-        vertices[byte_start + 7] = 0.0;
-        vertices[byte_start + 8] = 0.0;
-        vertices[byte_start + 9] = 1.0;
+            uint byte_start = 12 * (16 * voxel_in_chunk_start + vertex_count + j);
 
-        // texCoord
-        vertices[byte_start + 10] = lut_quad[i].x * 0.5 + 0.5;
-        vertices[byte_start + 11] = lut_quad[i].y * 0.5 + 0.5;
+            // position
+            vertices[byte_start + 0] = p.x;
+            vertices[byte_start + 1] = p.y;
+            vertices[byte_start + 2] = p.z;
+
+            // TODO: normal
+            vertices[byte_start + 3] = 0.0;
+            vertices[byte_start + 4] = 0.0;
+            vertices[byte_start + 5] = 1.0;
+
+            // TODO: tangent
+            vertices[byte_start + 6] = 1.0;
+            vertices[byte_start + 7] = 0.0;
+            vertices[byte_start + 8] = 0.0;
+            vertices[byte_start + 9] = 1.0;
+
+            // TODO: tex coord
+            vertices[byte_start + 10] = 0;
+            vertices[byte_start + 11] = 0;
+        }
+
+        vertex_count += 3;
     }
 
-    vertices_per_voxel[flat_l_voxel_start].vertexCount = vertex_count;
-    vertices_per_voxel[flat_l_voxel_start].instanceCount = 1;
-    vertices_per_voxel[flat_l_voxel_start].firstVertex = 16 * flat_l_voxel_start;
-    vertices_per_voxel[flat_l_voxel_start].firstInstance = pc.chunk_id;
+    vertices_per_voxel[voxel_in_chunk_start].vertexCount = vertex_count;
+    vertices_per_voxel[voxel_in_chunk_start].instanceCount = 1;
+    vertices_per_voxel[voxel_in_chunk_start].firstVertex = 16 * voxel_in_chunk_start;
+    vertices_per_voxel[voxel_in_chunk_start].firstInstance = pc.chunk_id;
 }
 
 // mesh construction resources:

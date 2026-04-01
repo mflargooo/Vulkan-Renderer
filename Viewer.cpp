@@ -659,7 +659,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// ------------------ run terrain computation ------------------
 
 	terrain.chunk_dims = glm::uvec3(32,32,32);
-	terrain.grid_dims = glm::uvec3(4,4,1);
+	terrain.grid_dims = glm::uvec3(4,4,4);
 
 	VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 	VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
@@ -742,7 +742,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			chunk.transform = ObjectsPipeline::Transform {
 				.WORLD_FROM_LOCAL = glm::translate(
 					glm::mat4(1.f), 
-					 glm::vec3(p, q, r) * glm::vec3(terrain.grid_dims) * 2.f
+					 glm::vec3(p, q, r) * glm::vec3(terrain.chunk_dims)
 				),
 				.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.f),
 			};
@@ -812,10 +812,11 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			{
 				TerrainPipeline::Constants constants{
+					.chunk_center = glm::uvec3(p, q, r) * terrain.chunk_dims,
 					.chunk_id = i,
 				};
 
-				vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
+				vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TerrainPipeline::Constants), &constants);
 			}
 
 			{ // dispatch
