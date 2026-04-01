@@ -25,7 +25,7 @@ layout(set=0, binding=1) buffer Voxels {
 };
 
 layout(push_constant) uniform Constants {
-    uvec3 chunk_center;
+    vec3 chunk_center;
     uint chunk_id;
 } pc;
 
@@ -43,7 +43,7 @@ void main() {
         global_voxel_id.z;
 
     vec3 voxel_pos_chunk_space = vec3(global_voxel_id);
-    vec3 voxel_pos_world_space = voxel_pos_chunk_space + vec3(pc.chunk_center);
+    vec3 voxel_pos_world_space = voxel_pos_chunk_space + pc.chunk_center;
     uint cube_case = compute_cube_case(voxel_pos_world_space);
     
     uint vertex_count = 0;

@@ -290,7 +290,7 @@ const vec3 corners[8] = {
 
 // temporary density
 float density(vec3 position) {
-    return (sin(position.x * 0.125) + sin(position.y * 0.125) + sin(position.z * 0.125));
+    return 8.f - length(position);
 }
 
 // lookup helpers
