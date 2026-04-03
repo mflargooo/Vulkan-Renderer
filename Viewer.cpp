@@ -659,7 +659,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// ------------------ run terrain computation ------------------
 
 	terrain.chunk_dims = glm::uvec3(16,16,16);
-	terrain.grid_dims = glm::uvec3(8,8,8);
+	terrain.grid_dims = glm::uvec3(2,2,2);
 
 	VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 	VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
@@ -744,12 +744,13 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			uint32_t p = i / (terrain.grid_dims.y * terrain.grid_dims.z);
 			uint32_t q = (i / terrain.grid_dims.z) % (terrain.grid_dims.y);
 			uint32_t r = i % terrain.grid_dims.z; 
+			glm::mat4 xf = glm::translate(
+				glm::mat4(1.f), 
+					(glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims) 
+			);
 			chunk.transform = ObjectsPipeline::Transform {
-				.WORLD_FROM_LOCAL = glm::translate(
-					glm::mat4(1.f), 
-					 (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims) 
-				),
-				.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.f),
+				.WORLD_FROM_LOCAL = xf,
+				.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(xf)),
 			};
 
 			{

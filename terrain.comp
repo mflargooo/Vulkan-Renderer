@@ -77,9 +77,18 @@ void main() {
             float du = densities[u];
             float dv = densities[v];
 
-            // interpolation by density values https://paulbourke.net/geometry/polygonise/
+            // interpolation by density values 
+            // normals by central difference
+            // src - https://paulbourke.net/geometry/polygonise/
             float t = (0.0 /* isolevel */ - du) / (dv - du);
             vec3 p = mix(pu, pv, t);
+            vec3 n = normalize(
+                vec3(
+                    density(p + pc.chunk_center - vec3(1.0, 0.0, 0.0)) - density(p + pc.chunk_center + vec3(1.0, 0.0, 0.0)),
+                    density(p + pc.chunk_center - vec3(0.0, 1.0, 0.0)) - density(p + pc.chunk_center + vec3(0.0, 1.0, 0.0)),
+                    density(p + pc.chunk_center - vec3(0.0, 0.0, 1.0)) - density(p + pc.chunk_center + vec3(0.0, 0.0, 1.0))
+                )
+            );
 
             uint byte_start = 12 * (16 * voxel_in_chunk_start + vertex_count + j);
 
@@ -88,10 +97,10 @@ void main() {
             vertices[byte_start + 1] = p.y;
             vertices[byte_start + 2] = p.z;
 
-            // normal by forward difference: insp by https://gamedev.stackexchange.com/questions/97707/marching-cubes-vertex-normals
-            vertices[byte_start + 3] = 0.0;
-            vertices[byte_start + 4] = 0.0;
-            vertices[byte_start + 5] = 1.0;
+            // normal
+            vertices[byte_start + 3] = n.x;
+            vertices[byte_start + 4] = n.y;
+            vertices[byte_start + 5] = n.z;
 
             // TODO: tangent
             vertices[byte_start + 6] = 1.0;
