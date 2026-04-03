@@ -74,7 +74,7 @@ const shadows_shaders = [
 main_objs.push( maek.CPP('ShadowPipeline.cpp', undefined, { depends:[...shadows_shaders] } ) );
 
 const terrain_shaders = [
-	maek.GLSLC('terrain.comp', undefined, { depends:["mc_lut.glsl"] }),
+	maek.GLSLC('terrain.comp', undefined, { depends:["mc_lut.glsl", "noise.glsl"] }),
 ];
 main_objs.push( maek.CPP('TerrainPipeline.cpp', undefined, { depends:[...terrain_shaders] } ) );
 

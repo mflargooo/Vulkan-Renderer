@@ -31,6 +31,21 @@ layout(push_constant) uniform Constants {
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
+#include "noise.glsl"
+
+// temporary density
+float density(vec3 position) {
+    return cnoise(position.xy * 0.1) * 5.0 - position.z;
+}
+
+uint compute_cube_case(vec3 position) {
+    uint cube_case = 0;
+    for (uint i = 0; i < 8; ++i) {
+        if (density(corners[i] + position) < 0.0) cube_case |= (1 << i);
+    }
+    return cube_case;
+}
+
 // inspired by https://www.youtube.com/watch?v=eKN8vz9YZEQ
 void main() {
     uvec3 global_voxel_id = gl_GlobalInvocationID; // voxel id in full chunk
@@ -84,8 +99,8 @@ void main() {
             vertices[byte_start + 9] = 1.0;
 
             // TODO: tex coord
-            vertices[byte_start + 10] = 0;
-            vertices[byte_start + 11] = 0;
+            vertices[byte_start + 10] = 0.5;
+            vertices[byte_start + 11] = 0.5;
         }
 
         vertex_count += 3;

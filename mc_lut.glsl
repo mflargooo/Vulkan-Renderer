@@ -288,20 +288,8 @@ const vec3 corners[8] = {
     vec3(0.0, 1.0, 1.0),
 };
 
-// temporary density
-float density(vec3 position) {
-    return 8.f - length(position);
-}
 
-// lookup helpers
+// lookup helper
 int tri_look_up(uint cube_case, uint i) {
     return triangle_table[cube_case * 16 + i];
-}
-
-uint compute_cube_case(vec3 position) {
-    uint cube_case = 0;
-    for (uint i = 0; i < 8; ++i) {
-        if (density(corners[i] + position) < 0.0) cube_case |= (1 << i);
-    }
-    return cube_case;
 }

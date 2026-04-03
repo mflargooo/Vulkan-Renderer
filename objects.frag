@@ -61,7 +61,6 @@ void main() {
         forward_pass(position, n, vec3(0.0), 0.0, vec3(0.0), direct_diffuse, direct_specular);
 
         vec3 env_lighting = texture(IRRADIANCE, n).rgb;
-        albedo = vec3(1.0);
         base_color = albedo * (direct_diffuse + env_lighting);
         
     } else if (pc.type == 1) { // MIRROR

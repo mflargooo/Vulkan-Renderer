@@ -717,6 +717,11 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain.descriptor_pool) );
 		}
 		
+		// TODO: since many chunks have 0 geometry, have each voxel atomic 
+		// add the number of vertices it includes to the chunk's total 
+		// vertex count buffer that is mapped. Then the CPU can deallocate
+		// and skip emplacing empty chunks, and reallocate a tight buffer
+		// for the VkDrawIndirectCommand structures
 		terrain.chunks.reserve(num_chunks);
 		for (uint32_t i = 0; i < num_chunks; ++i) {
 			terrain.chunks.emplace_back();
