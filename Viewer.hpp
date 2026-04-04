@@ -338,6 +338,10 @@ struct Viewer : RTG::Application {
 		glm::uvec3 grid_dims = glm::uvec3(0); // grid of chunks
 		glm::uvec3 chunk_dims = glm::uvec3(0);
 
+		uint32_t octaves = 0;
+		float frequency = .02f;
+		float amplitude = 1.f;
+
 		// Terrain vertices, 16 per voxel
 		struct Chunk {
 			ObjectsPipeline::Transform transform; // transforms chunk-local to work space
