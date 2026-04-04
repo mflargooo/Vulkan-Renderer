@@ -135,8 +135,12 @@ struct Viewer : RTG::Application {
 		struct Constants {
 			glm::vec3 chunk_center;
 			uint32_t chunk_id;
+
+			uint32_t octaves;
+			float frequency;
+			float amplitude;
 		};
-		static_assert(sizeof(Constants) == 4+4*3, "TerrainPipeline::Constants is packed");
+		static_assert(sizeof(Constants) == 4+4*3+4+4+4, "TerrainPipeline::Constants is packed");
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 

@@ -658,8 +658,8 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 	// ------------------ run terrain computation ------------------
 
-	terrain.chunk_dims = glm::uvec3(16,16,16);
-	terrain.grid_dims = glm::uvec3(2,2,2);
+	terrain.chunk_dims = glm::uvec3(32,32,32);
+	terrain.grid_dims = glm::uvec3(8,8,2);
 
 	VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 	VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
@@ -820,6 +820,11 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 				TerrainPipeline::Constants constants{
 					.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
 					.chunk_id = i,
+
+					.octaves = 4,
+					.frequency = .015f,
+					.amplitude = 16.f,
+					
 				};
 
 				vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TerrainPipeline::Constants), &constants);

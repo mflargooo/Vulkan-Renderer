@@ -27,6 +27,10 @@ layout(set=0, binding=1) buffer Voxels {
 layout(push_constant) uniform Constants {
     vec3 chunk_center;
     uint chunk_id;
+
+    uint octaves;
+    float frequency;
+    float amplitude;
 } pc;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
@@ -34,7 +38,16 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 #include "noise.glsl"
 
 float density(vec3 position) {
-    return cnoise(position.xy * 0.1) * 5.0 - position.z;
+    float d = 0.0;
+    float f = pc.frequency;
+    float a = pc.amplitude;
+    for (uint i = 0; i < pc.octaves; ++i) {
+        d += cnoise(position.xy * f) * a;
+        f *= 2;
+        a *= 0.5;
+    }
+
+    return d - position.z;
 }
 
 // inspired by https://www.youtube.com/watch?v=eKN8vz9YZEQ
