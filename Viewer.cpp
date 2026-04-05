@@ -659,6 +659,8 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// ------------------ run terrain computation ------------------
 
 	if (terrain.octaves > 0) {
+		uint32_t num_chunks = terrain.grid_dims.x * terrain.grid_dims.y * terrain.grid_dims.z;
+
 		VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 		VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
 		
@@ -679,6 +681,29 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			};
 			VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &terrain_compute_cmd_buffer) );
 		}
+
+		{ // create the descriptor pools
+			std::array< VkDescriptorPoolSize, 2 > pool_sizes{
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.descriptorCount = 2 * 1 * num_chunks, // two desc per set, one set per chunk, num_chunks per terrain
+				},
+				VkDescriptorPoolSize{
+					.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.descriptorCount = 1, // one transform desc per terrain terrain
+				},
+			};
+
+			VkDescriptorPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+				.maxSets = num_chunks+1, // one set
+				.poolSizeCount = uint32_t(pool_sizes.size()),
+				.pPoolSizes = pool_sizes.data(),
+			};
+
+			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain.descriptor_pool) );
+		}
 		
 		Helpers::AllocatedBuffer dummy_vertices = rtg.helpers.create_buffer(
 			1,
@@ -687,7 +712,6 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			Helpers::Unmapped
 		);
 
-		uint32_t num_chunks = terrain.grid_dims.x * terrain.grid_dims.y * terrain.grid_dims.z;
 		terrain.vertices_per_chunk = rtg.helpers.create_buffer(
 			sizeof(VkDrawIndirectCommand) * num_chunks,
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
@@ -730,29 +754,6 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			}
 
 			vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
-
-			{ // create the descriptor pools
-				std::array< VkDescriptorPoolSize, 2 > pool_sizes{
-					VkDescriptorPoolSize{
-						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-						.descriptorCount = 2 * 1 * num_chunks, // two desc per set, one set per chunk, num_chunks per terrain
-					},
-					VkDescriptorPoolSize{
-						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-						.descriptorCount = 1, // one transform desc per terrain terrain
-					},
-				};
-
-				VkDescriptorPoolCreateInfo create_info{
-					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-					.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-					.maxSets = num_chunks+1, // one set
-					.poolSizeCount = uint32_t(pool_sizes.size()),
-					.pPoolSizes = pool_sizes.data(),
-				};
-
-				VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain.descriptor_pool) );
-			}
 				
 			for (uint32_t i = 0; i < num_chunks; ++i) {
 				Terrain::Chunk chunk;
@@ -861,6 +862,9 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 
 		VK( vkQueueWaitIdle(rtg.graphics_queue) );
+		
+		VK( vkResetDescriptorPool(rtg.device, terrain.descriptor_pool, 0) );
+		rtg.helpers.destroy_buffer(std::move(dummy_vertices));
 
 		// chunk id + vertex count
 		std::vector< std::pair< uint32_t, uint32_t > > visible_chunks;	
@@ -902,29 +906,6 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			}
 
 			vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
-
-			{ // create the descriptor pools
-				std::array< VkDescriptorPoolSize, 2 > pool_sizes{
-					VkDescriptorPoolSize{
-						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-						.descriptorCount = 2 * 1 * num_chunks, // two desc per set, one set per chunk, num_chunks per terrain
-					},
-					VkDescriptorPoolSize{
-						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-						.descriptorCount = 1, // one transform desc per terrain terrain
-					},
-				};
-
-				VkDescriptorPoolCreateInfo create_info{
-					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-					.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-					.maxSets = num_chunks+1, // one set
-					.poolSizeCount = uint32_t(pool_sizes.size()),
-					.pPoolSizes = pool_sizes.data(),
-				};
-
-				VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain.descriptor_pool) );
-			}
 			
 			for (uint32_t c = 0; c < visible_chunks.size(); ++c) {
 				auto [i, vertex_count] = visible_chunks[c];
@@ -1053,8 +1034,6 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 		VK( vkQueueWaitIdle(rtg.graphics_queue) );
 
-		rtg.helpers.destroy_buffer(std::move(dummy_vertices));
-
 		vkFreeCommandBuffers(rtg.device, terrain_compute_cmd_pool, 1, &terrain_compute_cmd_buffer);
 		terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 		vkDestroyCommandPool(rtg.device, terrain_compute_cmd_pool, nullptr);
@@ -1176,6 +1155,9 @@ Viewer::~Viewer() {
 	}
 	if (terrain.Transforms.handle != VK_NULL_HANDLE) {
 		rtg.helpers.destroy_buffer(std::move(terrain.Transforms));
+	}
+	if (terrain.vertices_per_chunk.handle != VK_NULL_HANDLE) {
+		rtg.helpers.destroy_buffer(std::move(terrain.vertices_per_chunk));
 	}
 
 	terrain.chunks.clear();
