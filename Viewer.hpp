@@ -135,12 +135,13 @@ struct Viewer : RTG::Application {
 		struct Constants {
 			glm::vec3 chunk_center;
 			uint32_t chunk_id;
+			uint32_t pass_id;
 
 			uint32_t octaves;
 			float frequency;
 			float amplitude;
 		};
-		static_assert(sizeof(Constants) == 4+4*3+4+4+4, "TerrainPipeline::Constants is packed");
+		static_assert(sizeof(Constants) == 4*3+4+4+4+4+4, "TerrainPipeline::Constants is packed");
 
 		VkPipelineLayout layout = VK_NULL_HANDLE;
 
@@ -346,10 +347,7 @@ struct Viewer : RTG::Application {
 		struct Chunk {
 			ObjectsPipeline::Transform transform; // transforms chunk-local to work space
 			Helpers::AllocatedBuffer vertices; // local vertex positions
-
-			// Holds VkDrawIndirectCommand info per voxel for indirect draw: https://vkguide.dev/docs/gpudriven/draw_indirect/
-			Helpers::AllocatedBuffer vertices_per_voxel; 
-
+			
 			VkDescriptorSet descriptor = VK_NULL_HANDLE;
 		};
 		std::vector< Chunk > chunks;
@@ -357,6 +355,7 @@ struct Viewer : RTG::Application {
 		using Vertex = PosNorTanTexVertex;
 
 		VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+		Helpers::AllocatedBuffer vertices_per_chunk;
 		Helpers::AllocatedBuffer Transforms_src;
 		Helpers::AllocatedBuffer Transforms;
 		VkDescriptorSet Transforms_descriptors = VK_NULL_HANDLE;

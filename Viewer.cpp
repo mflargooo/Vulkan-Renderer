@@ -665,7 +665,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		{
 			VkCommandPoolCreateInfo create_info{
 				.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-				.flags = 0,
+				.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
 			};
 			VK ( vkCreateCommandPool(rtg.device, &create_info, nullptr, &terrain_compute_cmd_pool) );
 		}
@@ -679,18 +679,211 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			};
 			VK( vkAllocateCommandBuffers(rtg.device, &alloc_info, &terrain_compute_cmd_buffer) );
 		}
+		
+		Helpers::AllocatedBuffer dummy_vertices = rtg.helpers.create_buffer(
+			1,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
 
-		{ // rec
-			VkCommandBufferBeginInfo begin_info{
-				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-				.flags = 0,
-			};
-			VK( vkBeginCommandBuffer(terrain_compute_cmd_buffer, &begin_info) );
+		uint32_t num_chunks = terrain.grid_dims.x * terrain.grid_dims.y * terrain.grid_dims.z;
+		terrain.vertices_per_chunk = rtg.helpers.create_buffer(
+			sizeof(VkDrawIndirectCommand) * num_chunks,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+			Helpers::Mapped
+		);
+
+		std::vector< VkDrawIndirectCommand > zeros(
+			num_chunks, 
+			VkDrawIndirectCommand{
+				.vertexCount = 0,
+				.instanceCount = 1,
+				.firstVertex = 0,
+				.firstInstance = 0
+			}
+		);
+		auto reset_indirect_cmds = [&vpc=terrain.vertices_per_chunk, &zeros, &num_chunks]() {
+			memcpy(
+				reinterpret_cast< VkDrawIndirectCommand *>(vpc.allocation.data()), 
+				zeros.data(), 
+				num_chunks * sizeof(VkDrawIndirectCommand)
+			);
+		};
+
+		auto get_indirect_cmd = [&vpc=terrain.vertices_per_chunk](uint32_t i) -> VkDrawIndirectCommand & {
+			return reinterpret_cast< VkDrawIndirectCommand *>(vpc.allocation.data())[i];
+		};
+
+		reset_indirect_cmds();
+
+		{ // rec pass 0
+
+			{
+				VkCommandBufferBeginInfo begin_info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+					.flags = 0,
+				};
+				VK( vkBeginCommandBuffer(terrain_compute_cmd_buffer, &begin_info) );
+			}
 
 			vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
 
-			uint32_t num_chunks = terrain.grid_dims.x * terrain.grid_dims.y * terrain.grid_dims.z;
-			uint32_t voxels_per_chunk = terrain.chunk_dims.x * terrain.chunk_dims.y * terrain.chunk_dims.z;
+			{ // create the descriptor pools
+				std::array< VkDescriptorPoolSize, 2 > pool_sizes{
+					VkDescriptorPoolSize{
+						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+						.descriptorCount = 2 * 1 * num_chunks, // two desc per set, one set per chunk, num_chunks per terrain
+					},
+					VkDescriptorPoolSize{
+						.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+						.descriptorCount = 1, // one transform desc per terrain terrain
+					},
+				};
+
+				VkDescriptorPoolCreateInfo create_info{
+					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+					.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+					.maxSets = num_chunks+1, // one set
+					.poolSizeCount = uint32_t(pool_sizes.size()),
+					.pPoolSizes = pool_sizes.data(),
+				};
+
+				VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain.descriptor_pool) );
+			}
+				
+			for (uint32_t i = 0; i < num_chunks; ++i) {
+				Terrain::Chunk chunk;
+
+				uint32_t p = i / (terrain.grid_dims.y * terrain.grid_dims.z);
+				uint32_t q = (i / terrain.grid_dims.z) % (terrain.grid_dims.y);
+				uint32_t r = i % terrain.grid_dims.z; 
+
+				// --------------- bind
+				{
+					{ // allocate
+						VkDescriptorSetAllocateInfo alloc_info{
+							.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+							.descriptorPool = terrain.descriptor_pool,
+							.descriptorSetCount = 1,
+							.pSetLayouts = &terrain_pipeline.set0_Terrain,
+						};
+						
+						VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &chunk.descriptor) );
+					}
+
+					std::array< VkDescriptorBufferInfo, 2 > infos{
+						VkDescriptorBufferInfo{
+							.buffer = dummy_vertices.handle,
+							.offset = 0,
+							.range = dummy_vertices.size
+						},
+						VkDescriptorBufferInfo{
+							.buffer = terrain.vertices_per_chunk.handle,
+							.offset = 0,
+							.range = terrain.vertices_per_chunk.size
+						},
+					};
+
+					std::array< VkWriteDescriptorSet, 2 > writes{
+						VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.dstSet = chunk.descriptor,
+							.dstBinding = 0,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+							.pBufferInfo = &infos[0],
+						},
+						VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.dstSet = chunk.descriptor,
+							.dstBinding = 1,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+							.pBufferInfo = &infos[1],
+						},
+					};
+					
+					vkUpdateDescriptorSets(rtg.device, (uint32_t)(writes.size()), writes.data(), 0, nullptr);
+				}
+
+				{
+					std::array< VkDescriptorSet, 1 > descriptor_sets{
+						chunk.descriptor
+					};
+					vkCmdBindDescriptorSets(
+						terrain_compute_cmd_buffer, // cmd buf
+						VK_PIPELINE_BIND_POINT_COMPUTE, // pipeline bind point
+						terrain_pipeline.layout, // pipeline layout
+						0, // first set
+						uint32_t(descriptor_sets.size()), descriptor_sets.data(), // descriptor sets count, ptr
+						0, nullptr // dynamic offsets count, ptr
+					);				
+				}
+				// ---------------
+
+				{ // pass 0: counting vertices
+					{
+						TerrainPipeline::Constants constants{
+							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
+							.chunk_id = i,
+							.pass_id = 0,							
+						};
+
+						vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TerrainPipeline::Constants), &constants);
+					}
+
+					{ // dispatch
+						vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_dims.x / 8, terrain.chunk_dims.y / 8, terrain.chunk_dims.z / 8);
+					}
+				}
+			}
+
+			VK( vkEndCommandBuffer(terrain_compute_cmd_buffer) );
+		}
+
+		{
+			VkSubmitInfo submit_info{
+				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+				.commandBufferCount = 1,
+				.pCommandBuffers = &terrain_compute_cmd_buffer,
+			};
+
+			VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, VK_NULL_HANDLE) );
+		}
+
+		VK( vkQueueWaitIdle(rtg.graphics_queue) );
+
+		// chunk id + vertex count
+		std::vector< std::pair< uint32_t, uint32_t > > visible_chunks;	
+		{ // setup for pass 1
+			for (uint32_t i = 0; i < num_chunks; ++i) {
+				uint32_t num_vertices = get_indirect_cmd(i).vertexCount;
+				if (num_vertices == 0) continue;
+
+				visible_chunks.emplace_back(i, num_vertices);
+			}
+
+			terrain.chunks.reserve(visible_chunks.size());
+		}
+
+		reset_indirect_cmds();
+		
+		{ // rec pass 1		
+
+			VK( vkResetCommandBuffer(terrain_compute_cmd_buffer, 0) );
+			{
+				VkCommandBufferBeginInfo begin_info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+					.flags = 0,
+				};
+				VK( vkBeginCommandBuffer(terrain_compute_cmd_buffer, &begin_info) );
+			}
+
+			vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
 
 			{ // create the descriptor pools
 				std::array< VkDescriptorPoolSize, 2 > pool_sizes{
@@ -715,41 +908,34 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 				VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &terrain.descriptor_pool) );
 			}
 			
-			// TODO: since many chunks have 0 geometry, have each voxel atomic 
-			// add the number of vertices it includes to the chunk's total 
-			// vertex count buffer that is mapped. Then the CPU can deallocate
-			// and skip emplacing empty chunks, and reallocate a tight buffer
-			// for the VkDrawIndirectCommand structures
-			terrain.chunks.reserve(num_chunks);
-			for (uint32_t i = 0; i < num_chunks; ++i) {
+			for (uint32_t c = 0; c < visible_chunks.size(); ++c) {
+				auto [i, vertex_count] = visible_chunks[c];
 				terrain.chunks.emplace_back();
-
 				Terrain::Chunk &chunk = terrain.chunks.back();
-				chunk.vertices = rtg.helpers.create_buffer(
-					voxels_per_chunk * 16 * sizeof(Terrain::Vertex),
-					VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					Helpers::Unmapped
-				);
-
-				chunk.vertices_per_voxel = rtg.helpers.create_buffer(
-					voxels_per_chunk * sizeof(VkDrawIndirectCommand),
-					VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-					Helpers::Unmapped
-				);
 
 				uint32_t p = i / (terrain.grid_dims.y * terrain.grid_dims.z);
 				uint32_t q = (i / terrain.grid_dims.z) % (terrain.grid_dims.y);
 				uint32_t r = i % terrain.grid_dims.z; 
-				glm::mat4 xf = glm::translate(
-					glm::mat4(1.f), 
-						(glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims) 
-				);
-				chunk.transform = ObjectsPipeline::Transform {
-					.WORLD_FROM_LOCAL = xf,
-					.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(xf)),
-				};
+
+				{
+					glm::mat4 xf = glm::translate(
+						glm::mat4(1.f), 
+							(glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims) 
+					);
+					chunk.transform = ObjectsPipeline::Transform {
+						.WORLD_FROM_LOCAL = xf,
+						.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(xf)),
+					};
+				}
+
+				{
+					chunk.vertices = rtg.helpers.create_buffer(
+						vertex_count * sizeof(Terrain::Vertex),
+						VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+						Helpers::Unmapped
+					);
+				}
 
 				{
 					{ // allocate
@@ -770,9 +956,9 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 							.range = chunk.vertices.size
 						},
 						VkDescriptorBufferInfo{
-							.buffer = chunk.vertices_per_voxel.handle,
+							.buffer = terrain.vertices_per_chunk.handle,
 							.offset = 0,
-							.range = chunk.vertices_per_voxel.size
+							.range = terrain.vertices_per_chunk.size
 						},
 					};
 
@@ -814,25 +1000,29 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 					);				
 				}
 
-				{
-					TerrainPipeline::Constants constants{
-						.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
-						.chunk_id = i,
+				get_indirect_cmd(i).firstInstance = c;
 
-						.octaves = terrain.octaves,
-						.frequency = terrain.frequency,
-						.amplitude = terrain.amplitude,
-						
-					};
+				{ // pass 1
+					{
+						TerrainPipeline::Constants constants{
+							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
+							.chunk_id = i,
+							.pass_id = 1,
 
-					vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TerrainPipeline::Constants), &constants);
+							.octaves = terrain.octaves,
+							.frequency = terrain.frequency,
+							.amplitude = terrain.amplitude,
+							
+						};
+
+						vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TerrainPipeline::Constants), &constants);
+					}
+
+					{ // dispatch
+						vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_dims.x / 8, terrain.chunk_dims.y / 8, terrain.chunk_dims.z / 8);
+					}
 				}
-
-				{ // dispatch
-					vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_dims.x / 8, terrain.chunk_dims.y / 8, terrain.chunk_dims.z / 8);
-				}
-			}
-
+			}			
 			VK( vkEndCommandBuffer(terrain_compute_cmd_buffer) );
 		}
 
@@ -847,6 +1037,8 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 
 		VK( vkQueueWaitIdle(rtg.graphics_queue) );
+
+		rtg.helpers.destroy_buffer(std::move(dummy_vertices));
 
 		vkFreeCommandBuffers(rtg.device, terrain_compute_cmd_pool, 1, &terrain_compute_cmd_buffer);
 		terrain_compute_cmd_buffer = VK_NULL_HANDLE;
@@ -959,9 +1151,6 @@ Viewer::~Viewer() {
 		terrain.descriptor_pool = VK_NULL_HANDLE;
 	}
 	for (auto &chunk : terrain.chunks) {
-		if (chunk.vertices_per_voxel.handle) {
-			rtg.helpers.destroy_buffer(std::move(chunk.vertices_per_voxel));
-		}
 		if (chunk.vertices.handle) {
 			rtg.helpers.destroy_buffer(std::move(chunk.vertices));
 		}
@@ -2481,7 +2670,6 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// push constants type
 			vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ObjectsPipeline::Constants), &constants);
 
-			uint32_t voxels_per_chunk = terrain.chunk_dims.x * terrain.chunk_dims.y * terrain.chunk_dims.z;
 			for (auto &chunk : terrain.chunks) {
 				{
 					std::array< VkBuffer, 1 > vertex_buffers{ chunk.vertices.handle };
@@ -2489,7 +2677,8 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 				}
 
-				vkCmdDrawIndirect(workspace.command_buffer, chunk.vertices_per_voxel.handle, 0, voxels_per_chunk, sizeof(VkDrawIndirectCommand));
+				uint32_t i = (uint32_t)(&chunk - &terrain.chunks[0]);
+				vkCmdDrawIndirect(workspace.command_buffer, terrain.vertices_per_chunk.handle, i * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
 			}
 		}
 

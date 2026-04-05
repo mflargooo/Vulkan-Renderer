@@ -11,7 +11,7 @@ struct Vertex {
 };
 */
 layout(set=0, binding=0) buffer Vertices {
-    float vertices[]; // num voxels * (max 16 verts (<= 5 tris) per voxel)
+    float vertices[]; 
 };
 
 struct VkDrawIndirectCommand {
@@ -20,13 +20,16 @@ struct VkDrawIndirectCommand {
     uint firstVertex;
     uint firstInstance;
 };
-layout(set=0, binding=1) buffer Voxels {
-    VkDrawIndirectCommand vertices_per_voxel[];
+layout(set=0, binding=1) buffer Chunks {
+    // pass 0: vertexCount collects size for allocating tight vertex buffer per chunk
+    // pass 1: after allocation, vertexCount is used as index for next triangle vertices 
+    VkDrawIndirectCommand vertices_per_chunk[];
 };
 
 layout(push_constant) uniform Constants {
     vec3 chunk_center;
     uint chunk_id;
+    uint pass_id;
 
     uint octaves;
     float frequency;
@@ -50,16 +53,10 @@ float density(vec3 position) {
     return d - position.z;
 }
 
-// inspired by https://www.youtube.com/watch?v=eKN8vz9YZEQ
-void main() {
+void count_vertices_per_chunk() {
     uvec3 global_voxel_id = gl_GlobalInvocationID; // voxel id in full chunk
     uvec3 local_voxel_id = gl_LocalInvocationID; // voxel id in local 8x8x8 workgroup
     uvec3 chunk_dims = gl_WorkGroupSize * gl_NumWorkGroups; // dimension of chunk in voxels
-
-    uint voxel_in_chunk_start = 
-        global_voxel_id.x * (chunk_dims.y * chunk_dims.z) +
-        global_voxel_id.y * chunk_dims.z +
-        global_voxel_id.z;
 
     vec3 voxel_pos_chunk_space = vec3(global_voxel_id);
     vec3 voxel_pos_world_space = voxel_pos_chunk_space + pc.chunk_center;
@@ -75,10 +72,37 @@ void main() {
     for (uint i = 0; i < 15; i+=3) { // place triangles
         int e0 = tri_look_up(cube_case, i);
         if (e0 == -1) break;
+        vertex_count += 3;
+    }
+
+    atomicAdd(vertices_per_chunk[pc.chunk_id].vertexCount, vertex_count);
+}
+
+// inspired by https://www.youtube.com/watch?v=eKN8vz9YZEQ
+void compute_mesh() {
+    uvec3 global_voxel_id = gl_GlobalInvocationID; // voxel id in full chunk
+    uvec3 local_voxel_id = gl_LocalInvocationID; // voxel id in local 8x8x8 workgroup
+    uvec3 chunk_dims = gl_WorkGroupSize * gl_NumWorkGroups; // dimension of chunk in voxels
+
+    vec3 voxel_pos_chunk_space = vec3(global_voxel_id);
+    vec3 voxel_pos_world_space = voxel_pos_chunk_space + pc.chunk_center;
+
+    uint cube_case = 0;
+    float densities[8];
+    for (uint i = 0; i < 8; ++i) {
+        densities[i] = density(corners[i] + voxel_pos_world_space);
+        if (densities[i] < 0.0) cube_case |= (1 << i);
+    }
+    
+    for (uint i = 0; i < 15; i+=3) { // place triangles
+        int e0 = tri_look_up(cube_case, i);
+        if (e0 == -1) break;
         int e1 = tri_look_up(cube_case, i+1);
         int e2 = tri_look_up(cube_case, i+2);
 
         int edges[3] = { e0, e1, e2 };
+
+        uint vertex_start = atomicAdd(vertices_per_chunk[pc.chunk_id].vertexCount, 3);
         for (uint j = 0; j < 3; ++j) {
             int e = edges[j];
             uint u = edge_vertex_ids[e][0];
@@ -103,36 +127,37 @@ void main() {
                 )
             );
 
-            uint byte_start = 12 * (16 * voxel_in_chunk_start + vertex_count + j);
+            uint float_start = 12 * (vertex_start + j);
 
             // position
-            vertices[byte_start + 0] = p.x;
-            vertices[byte_start + 1] = p.y;
-            vertices[byte_start + 2] = p.z;
+            vertices[float_start + 0] = p.x;
+            vertices[float_start + 1] = p.y;
+            vertices[float_start + 2] = p.z;
 
             // normal
-            vertices[byte_start + 3] = n.x;
-            vertices[byte_start + 4] = n.y;
-            vertices[byte_start + 5] = n.z;
+            vertices[float_start + 3] = n.x;
+            vertices[float_start + 4] = n.y;
+            vertices[float_start + 5] = n.z;
 
             // TODO: tangent
-            vertices[byte_start + 6] = 1.0;
-            vertices[byte_start + 7] = 0.0;
-            vertices[byte_start + 8] = 0.0;
-            vertices[byte_start + 9] = 1.0;
+            vertices[float_start + 6] = 1.0;
+            vertices[float_start + 7] = 0.0;
+            vertices[float_start + 8] = 0.0;
+            vertices[float_start + 9] = 1.0;
 
             // TODO: tex coord
-            vertices[byte_start + 10] = 0.5;
-            vertices[byte_start + 11] = 0.5;
+            vertices[float_start + 10] = 0.5;
+            vertices[float_start + 11] = 0.5;
         }
-
-        vertex_count += 3;
     }
+}
 
-    vertices_per_voxel[voxel_in_chunk_start].vertexCount = vertex_count;
-    vertices_per_voxel[voxel_in_chunk_start].instanceCount = 1;
-    vertices_per_voxel[voxel_in_chunk_start].firstVertex = 16 * voxel_in_chunk_start;
-    vertices_per_voxel[voxel_in_chunk_start].firstInstance = pc.chunk_id;
+void main() {
+    if(pc.pass_id == 0) {
+        count_vertices_per_chunk();
+    } else if (pc.pass_id == 1) {
+        compute_mesh();
+    }
 }
 
 // mesh construction resources:
