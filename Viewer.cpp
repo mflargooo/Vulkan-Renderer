@@ -704,11 +704,12 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 				.firstInstance = 0
 			}
 		);
-		auto reset_indirect_cmds = [&vpc=terrain.vertices_per_chunk, &zeros, &num_chunks]() {
+
+		auto reset_indirect_cmds = [&vpc=terrain.vertices_per_chunk, &zeros](uint32_t size) {
 			memcpy(
 				reinterpret_cast< VkDrawIndirectCommand *>(vpc.allocation.data()), 
 				zeros.data(), 
-				num_chunks * sizeof(VkDrawIndirectCommand)
+				size * sizeof(VkDrawIndirectCommand)
 			);
 		};
 
@@ -716,7 +717,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			return reinterpret_cast< VkDrawIndirectCommand *>(vpc.allocation.data())[i];
 		};
 
-		reset_indirect_cmds();
+		reset_indirect_cmds(num_chunks);
 
 		{ // rec pass 0
 
@@ -830,7 +831,11 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 						TerrainPipeline::Constants constants{
 							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
 							.chunk_id = i,
-							.pass_id = 0,							
+							.pass_id = 0,		
+							
+							.octaves = terrain.octaves,
+							.frequency = terrain.frequency,
+							.amplitude = terrain.amplitude,
 						};
 
 						vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TerrainPipeline::Constants), &constants);
@@ -870,7 +875,20 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			terrain.chunks.reserve(visible_chunks.size());
 		}
 
-		reset_indirect_cmds();
+		// tight reallocate
+		if (terrain.vertices_per_chunk.handle) rtg.helpers.destroy_buffer(std::move(terrain.vertices_per_chunk));
+		terrain.vertices_per_chunk = rtg.helpers.create_buffer(
+			visible_chunks.size() * sizeof(VkDrawIndirectCommand),
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+			Helpers::Mapped
+		);
+
+		reset_indirect_cmds((uint32_t)(visible_chunks.size()));
+
+		for (uint32_t c = 0; c < visible_chunks.size(); ++c) {
+			get_indirect_cmd(c).firstInstance = c;
+		}
 		
 		{ // rec pass 1		
 
@@ -1000,19 +1018,16 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 					);				
 				}
 
-				get_indirect_cmd(i).firstInstance = c;
-
 				{ // pass 1
 					{
 						TerrainPipeline::Constants constants{
 							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
-							.chunk_id = i,
+							.chunk_id = c,
 							.pass_id = 1,
 
 							.octaves = terrain.octaves,
 							.frequency = terrain.frequency,
 							.amplitude = terrain.amplitude,
-							
 						};
 
 						vkCmdPushConstants(terrain_compute_cmd_buffer, terrain_pipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(TerrainPipeline::Constants), &constants);
@@ -1675,7 +1690,7 @@ int Viewer::load_scene(const std::string &filename) {
 		terrain.amplitude = pterrain.amplitude;
 
 		terrain.chunk_dims = glm::uvec3(32, 32, 32);
-		terrain.grid_dims = glm::uvec3(8, 8, 2);
+		terrain.grid_dims = glm::uvec3(32, 32, 4);
 	}
 
 	parse_scene_graph();
@@ -2677,8 +2692,8 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 					vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 				}
 
-				uint32_t i = (uint32_t)(&chunk - &terrain.chunks[0]);
-				vkCmdDrawIndirect(workspace.command_buffer, terrain.vertices_per_chunk.handle, i * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
+				uint32_t c = (uint32_t)(&chunk - &terrain.chunks[0]);
+				vkCmdDrawIndirect(workspace.command_buffer, terrain.vertices_per_chunk.handle, c * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
 			}
 		}
 

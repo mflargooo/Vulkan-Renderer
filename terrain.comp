@@ -79,7 +79,7 @@ void count_vertices_per_chunk() {
 }
 
 // inspired by https://www.youtube.com/watch?v=eKN8vz9YZEQ
-void compute_mesh() {
+void compute_mesh_per_chunk() {
     uvec3 global_voxel_id = gl_GlobalInvocationID; // voxel id in full chunk
     uvec3 local_voxel_id = gl_LocalInvocationID; // voxel id in local 8x8x8 workgroup
     uvec3 chunk_dims = gl_WorkGroupSize * gl_NumWorkGroups; // dimension of chunk in voxels
@@ -156,7 +156,7 @@ void main() {
     if(pc.pass_id == 0) {
         count_vertices_per_chunk();
     } else if (pc.pass_id == 1) {
-        compute_mesh();
+        compute_mesh_per_chunk();
     }
 }
 
