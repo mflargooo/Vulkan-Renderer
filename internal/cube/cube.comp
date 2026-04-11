@@ -29,7 +29,7 @@ void main() {
 
     float weight = 0.0;
     vec3 prefiltered_color = vec3(0.0);
-    const uint samples = 1024u;
+    const uint samples = 1024u * 4u;
     for (uint i = 0u; i < samples; i++) {
         vec2 xi = hammersley( i, samples );
         vec3 H = importance_sample_ggx( xi, roughness, N );
@@ -43,5 +43,5 @@ void main() {
     }
 
     vec3 final_color = prefiltered_color / max(weight, 0.0001);
-    imageStore(outFace, ivec2(out_x, out_y), vec4(min(final_color, 65408), 1.0));
+    imageStore(outFace, ivec2(out_x, out_y), vec4(min(final_color, 65504.0), 1.0));
 }
