@@ -192,7 +192,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0, // omission of CREATE_FREE_DESCRIPTOR_SET_BIT, prevent individual descriptors allocated from this pool
-			.maxSets = 4 * per_workspace, // three sets per workspace
+			.maxSets = 5 * per_workspace, // three sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -1345,7 +1345,7 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			ObjectsPipeline::Light &light = light_instances.back();
 			light = lights[node->light->name];
 			light.CLIP_FROM_WORLD = perspective(
-				std::acosf(light.cos_outer) * 2.f,
+				std::acos(light.cos_outer) * 2.f,
 				1.f,
 				.5f,
 				light.limit_inv > 0.f ? std::min(1.f / light.limit_inv, free_camera.far) : free_camera.far
