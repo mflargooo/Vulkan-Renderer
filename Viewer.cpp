@@ -461,7 +461,25 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// env_maps vector is ordered such that the ith entry is the ith mip
 	// the lambertian prefiltered.
 
-	// make cubemap views 0 - lambertian, 1 - mirror, 2 - env, 3 - pbr
+	bool default_env_map = env_maps.empty();
+	if (env_maps.empty()) { // create dummy data
+		for (uint32_t i = 0; i < 2; ++i) {
+			env_maps.emplace_back(rtg.helpers.create_cubemap(
+				VkExtent2D{ .width = 1, .height = 1 },
+				VK_FORMAT_R16G16B16A16_SFLOAT, // change after converting data to appropriate format
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			));
+
+			uint64_t pixels[6] = { 0, 0, 0, 0, 0, 0 };
+			rtg.helpers.transfer_to_cubemap(&pixels, sizeof(uint64_t) * 6, env_maps.back());
+		}
+	}
+	
+	// make cubemap views 0 - lambertian, -1 - pbr
+	assert(env_maps.size() == 2); // lambertian and pbr
 	{ // make image views for the env_maps
 		env_map_views.reserve(3);
 		// lambertian
@@ -472,7 +490,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			uint32_t level_count = 1;
 		} view_infos[3] = { 
 			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
-			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = mip_levels }, // pbr
+			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = default_env_map ? 1 : mip_levels }, // pbr
 			{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
 		};
 
@@ -500,7 +518,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 	}
 
-	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, mip_levels, 0 }) { // make a sampler for the env_maps
+	for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, default_env_map ? 0 : mip_levels, 0 }) { // make a sampler for the env_maps
 		env_map_samplers.emplace_back(VK_NULL_HANDLE);
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
