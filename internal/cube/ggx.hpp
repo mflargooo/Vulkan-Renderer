@@ -193,6 +193,7 @@ void ggx(const char *infile, const char *outfile) {
         } */
 
         configuration.headless = true;
+        configuration.debug = false;
 
         RTG rtg(configuration);
 

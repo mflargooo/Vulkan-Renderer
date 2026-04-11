@@ -41,6 +41,7 @@ void lut(const char *outfile) {
         } */
 
         configuration.headless = true;
+        configuration.debug = false;
 
         RTG rtg(configuration);
 

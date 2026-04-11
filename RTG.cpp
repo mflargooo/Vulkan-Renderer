@@ -73,6 +73,11 @@ void RTG::Configuration::usage(std::function< void(const char *, const char *) >
 	callback("--physical-device <name>", "Run on the named physical device (guesses, otherwise).");
 	callback("--drawing-size <w> <h>", "Set the size of the surface to draw to.");
 	callback("--headless", "Don't create a window; read events from stdin.");
+	callback("--scene <path>", "Load scene in this .s72 file");
+	callback("--camera <name>", "Boot scene inside this camera. Fails to load if cmaera not found.");
+	callback("--culling none|frustrum", "Specify CPU-side culling to perform.");
+	callback("--exposure <e>", "Scales radiance by 2^e.");
+	callback("--tonemap linear|reinhard|green", "Apply the named tonemap operator. Defaults to linear.");
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
