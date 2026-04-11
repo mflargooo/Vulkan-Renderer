@@ -92,6 +92,9 @@ struct RTG {
 		// tonemap
 		int32_t tonemap = 0;
 
+		// do shadows
+		bool shadows = true;
+
 		//for configuration construction + management:
 		Configuration() = default;
 		void parse(int argc, char **argv); //parse command-line options; throws on error

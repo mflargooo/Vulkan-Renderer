@@ -1243,6 +1243,7 @@ int Viewer::load_scene(const std::string &filename) {
 			if (rtg.configuration.debug) std::cerr << "[LIGHT] " << name << std::endl;
 			ObjectsPipeline::Light light;
 			ObjectsPipeline::Light::pack_light(light, s72_light);
+			if (!rtg.configuration.shadows) light.flags &= 3;
 			lights.insert({ name, light });
 		}
 	}
@@ -1715,12 +1716,10 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		}
 
 		{ // create the shadow map descriptor pool
-			uint32_t per_shadow = (uint32_t)shadow_map_instances.size();
-			per_shadow = 128;
 			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
 				VkDescriptorPoolSize{
 					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-					.descriptorCount = 1 * 1 * per_shadow, // one desc per set, on set per shadow_map
+					.descriptorCount = 128, // max lights/shadows 
 				},
 			};
 

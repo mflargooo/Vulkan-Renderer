@@ -62,6 +62,8 @@ void RTG::Configuration::parse(int argc, char **argv) {
 			argi += 1;
 			tonemap = std::string(argv[argi]).compare("green") == 0 ? 2 : (std::string(argv[argi]).compare("linear") == 0 ? 1 : 0);
 			std::cout << tonemap << std::endl;
+		} else if (arg == "--no-shadow-maps") {
+			shadows = false;
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
@@ -78,6 +80,7 @@ void RTG::Configuration::usage(std::function< void(const char *, const char *) >
 	callback("--culling none|frustrum", "Specify CPU-side culling to perform.");
 	callback("--exposure <e>", "Scales radiance by 2^e.");
 	callback("--tonemap linear|reinhard|green", "Apply the named tonemap operator. Defaults to linear.");
+	callback("--no-shadow-maps", "Disable spot light shadows; skip shadow map look ups.");
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
