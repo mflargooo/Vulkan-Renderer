@@ -1719,7 +1719,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
 				VkDescriptorPoolSize{
 					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-					.descriptorCount = 128, // max lights/shadows 
+					.descriptorCount = 4096, // max lights/shadows 
 				},
 			};
 

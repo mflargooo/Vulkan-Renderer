@@ -204,7 +204,7 @@ void Viewer::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .descriptorCount = 128,
+                .descriptorCount = 4096,
                 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
             },
         };
