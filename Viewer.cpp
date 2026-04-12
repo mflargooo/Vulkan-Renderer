@@ -653,7 +653,49 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 		}
+	}
 
+	// set up statics for shadow maps
+	{ // https://gamedev.net/forums/topic/717811-shadow-mapping-in-vulkan-issue/
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.flags = 0,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+			.mipLodBias = 0.f,
+			.anisotropyEnable  = VK_FALSE,
+			.maxAnisotropy = 0.f,
+			.compareEnable = VK_TRUE,
+			.compareOp = VK_COMPARE_OP_LESS,
+			.minLod = 0.f,
+			.maxLod = VK_LOD_CLAMP_NONE,
+			.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &shadow_map_sampler) );
+	}
+
+	{ // create the shadow map descriptor pool
+		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 4096, // max lights/shadows 
+			},
+		};
+
+		VkDescriptorPoolCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+			.maxSets = 1, // one set
+			.poolSizeCount = uint32_t(pool_sizes.size()),
+			.pPoolSizes = pool_sizes.data(),
+		};
+
+		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &shadow_map_descriptor_pool) );
 	}
 }
 
@@ -1247,6 +1289,8 @@ int Viewer::load_scene(const std::string &filename) {
 			lights.insert({ name, light });
 		}
 	}
+
+	// initial pass of scene graph
 	parse_scene_graph();
 
 	if (rtg.configuration.camera.compare("")) { // select correct scene camera, if exists
@@ -1665,11 +1709,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		}
 		shadow_map_views.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
 
-		if (shadow_map_sampler) vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
-		shadow_map_sampler = VK_NULL_HANDLE;
-
-		if (shadow_map_descriptor_pool) vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
-		shadow_map_descriptor = VK_NULL_HANDLE;
+		vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
 
 		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) { // image view
 			{
@@ -1692,60 +1732,18 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			}
 		}
 
-		{ // https://gamedev.net/forums/topic/717811-shadow-mapping-in-vulkan-issue/
-			VkSamplerCreateInfo create_info{
-				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-				.flags = 0,
-				.magFilter = VK_FILTER_LINEAR,
-				.minFilter = VK_FILTER_LINEAR,
-				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-				.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-				.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-				.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-				.mipLodBias = 0.f,
-				.anisotropyEnable  = VK_FALSE,
-				.maxAnisotropy = 0.f,
-				.compareEnable = VK_TRUE,
-				.compareOp = VK_COMPARE_OP_LESS,
-				.minLod = 0.f,
-				.maxLod = VK_LOD_CLAMP_NONE,
-				.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
-				.unnormalizedCoordinates = VK_FALSE,
+		{ // allocate
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = shadow_map_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set9_Shadows,
 			};
-			VK( vkCreateSampler(rtg.device, &create_info, nullptr, &shadow_map_sampler) );
-		}
-
-		{ // create the shadow map descriptor pool
-			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
-				VkDescriptorPoolSize{
-					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-					.descriptorCount = 4096, // max lights/shadows 
-				},
-			};
-
-			VkDescriptorPoolCreateInfo create_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-				.maxSets = 1, // one set
-				.poolSizeCount = uint32_t(pool_sizes.size()),
-				.pPoolSizes = pool_sizes.data(),
-			};
-
-			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &shadow_map_descriptor_pool) );
+			
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &shadow_map_descriptor) );
 		}
 
 		{
-			{ // allocate
-				VkDescriptorSetAllocateInfo alloc_info{
-					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-					.descriptorPool = shadow_map_descriptor_pool,
-					.descriptorSetCount = 1,
-					.pSetLayouts = &objects_pipeline.set9_Shadows,
-				};
-				
-				VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &shadow_map_descriptor) );
-			}
-
 			std::vector< VkDescriptorImageInfo > infos(shadow_map_instances.size());
 			std::vector< VkWriteDescriptorSet > writes(shadow_map_instances.size());
 			
