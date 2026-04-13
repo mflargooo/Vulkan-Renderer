@@ -272,6 +272,7 @@ void forward_pass(vec3 position, vec3 normal, vec3 view, float roughness, vec3 t
         if (LIGHTS[i].flags == 6) {
             vec4 light_clip_pos = LIGHTS[i].CLIP_FROM_WORLD * vec4(position, 1.0);
             vec3 uvw = light_clip_pos.xyz / light_clip_pos.w * 0.5 + 0.5;
+            if (uvw.x > 1.0 || uvw.x < 0.0 || uvw.y > 1.0 || uvw.y < 0.0) continue; // outside of light fov
             float closest = textureProj(SHADOWS[nonuniformEXT(i)], vec4(uvw.xy, light_clip_pos.z / light_clip_pos.w, 1.0));
             if (uvw.z > closest) continue;
         }

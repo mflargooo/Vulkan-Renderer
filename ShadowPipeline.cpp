@@ -99,7 +99,7 @@ void Viewer::ShadowPipeline::create(RTG &rtg, VkRenderPass render_pass, uint32_t
             .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
             .depthBiasEnable = VK_TRUE,
             .depthBiasConstantFactor = 1.5f,
-            .depthBiasSlopeFactor = .75f,
+            .depthBiasSlopeFactor = .5f,
             .lineWidth = 1.f,
         };
 

@@ -193,7 +193,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0, // omission of CREATE_FREE_DESCRIPTOR_SET_BIT, prevent individual descriptors allocated from this pool
-			.maxSets = 4 * per_workspace, // three sets per workspace
+			.maxSets = 5 * per_workspace, // three sets per workspace
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -533,44 +533,42 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	}
 	
 	// make cubemap views 0 - lambertian, -1 - pbr
-	{
-		assert(env_maps.size() == 2); // lambertian and pbr
-		{ // make image views for the env_maps
-			env_map_views.reserve(3);
-			// lambertian
+	assert(env_maps.size() == 2); // lambertian and pbr
+	{ // make image views for the env_maps
+		env_map_views.reserve(3);
+		// lambertian
 
-			struct EnvMapView {
-				VkImageViewType type;
-				Helpers::AllocatedImage *image = nullptr;
-				uint32_t level_count = 1;
-			} view_infos[3] = { 
-				{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
-				{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = default_env_map ? 1 : mip_levels }, // pbr
-				{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
+		struct EnvMapView {
+			VkImageViewType type;
+			Helpers::AllocatedImage *image = nullptr;
+			uint32_t level_count = 1;
+		} view_infos[3] = { 
+			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps.back(), .level_count = 1 }, // lambertian
+			{ .type = VK_IMAGE_VIEW_TYPE_CUBE, .image = &env_maps[0], .level_count = default_env_map ? 1 : mip_levels }, // pbr
+			{ .type = VK_IMAGE_VIEW_TYPE_2D, .image = &textures[1], .level_count = 1 }, // lut is at index 1 of textures
+		};
+
+		for (EnvMapView &info : view_infos) {
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.flags = 0,
+				.image = info.image->handle,
+				.viewType = info.type,
+				.format = info.image->format,
+				// .components sets swizzling and is fine when zero inited
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = info.level_count,
+					.baseArrayLayer = 0,
+					.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
+				},
 			};
 
-			for (EnvMapView &info : view_infos) {
-				VkImageViewCreateInfo create_info{
-					.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-					.flags = 0,
-					.image = info.image->handle,
-					.viewType = info.type,
-					.format = info.image->format,
-					// .components sets swizzling and is fine when zero inited
-					.subresourceRange{
-						.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-						.baseMipLevel = 0,
-						.levelCount = info.level_count,
-						.baseArrayLayer = 0,
-						.layerCount = info.type == VK_IMAGE_VIEW_TYPE_CUBE ? 6U : 1U,
-					},
-				};
+			VkImageView image_view = VK_NULL_HANDLE;
+			VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
 
-				VkImageView image_view = VK_NULL_HANDLE;
-				VK( vkCreateImageView(rtg.device, &create_info, nullptr, &image_view) );
-
-				env_map_views.emplace_back(image_view);
-			}
+			env_map_views.emplace_back(image_view);
 		}
 
 		for (uint32_t level_count : std::array< uint32_t, 3 >{ 0, default_env_map ? 0 : mip_levels, 0 }) { // make a sampler for the env_maps
@@ -654,6 +652,49 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			vkUpdateDescriptorSets( rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr );
 		}
+	}
+
+	// set up statics for shadow maps
+	{ // https://gamedev.net/forums/topic/717811-shadow-mapping-in-vulkan-issue/
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.flags = 0,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+			.mipLodBias = 0.f,
+			.anisotropyEnable  = VK_FALSE,
+			.maxAnisotropy = 0.f,
+			.compareEnable = VK_TRUE,
+			.compareOp = VK_COMPARE_OP_LESS,
+			.minLod = 0.f,
+			.maxLod = VK_LOD_CLAMP_NONE,
+			.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+			.unnormalizedCoordinates = VK_FALSE,
+		};
+		VK( vkCreateSampler(rtg.device, &create_info, nullptr, &shadow_map_sampler) );
+	}
+
+	{ // create the shadow map descriptor pool
+		std::array< VkDescriptorPoolSize, 1 > pool_sizes{
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 4096, // max lights/shadows 
+			},
+		};
+
+		VkDescriptorPoolCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
+			.maxSets = 1, // one set
+			.poolSizeCount = uint32_t(pool_sizes.size()),
+			.pPoolSizes = pool_sizes.data(),
+		};
+
+		VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &shadow_map_descriptor_pool) );
 	}
 
 	// ------------------ run terrain computation ------------------
@@ -1661,6 +1702,7 @@ int Viewer::load_scene(const std::string &filename) {
 			if (rtg.configuration.debug) std::cerr << "[LIGHT] " << name << std::endl;
 			ObjectsPipeline::Light light;
 			ObjectsPipeline::Light::pack_light(light, s72_light);
+			if (!rtg.configuration.shadows) light.flags &= 3;
 			lights.insert({ name, light });
 		}
 	}
@@ -1772,7 +1814,7 @@ void Viewer::parse_scene_graph() { // populate all object instances
 			ObjectsPipeline::Light &light = light_instances.back();
 			light = lights[node->light->name];
 			light.CLIP_FROM_WORLD = perspective(
-				std::acosf(light.cos_outer) * 2.f,
+				std::acos(light.cos_outer) * 2.f,
 				1.f,
 				.5f,
 				light.limit_inv > 0.f ? std::min(1.f / light.limit_inv, free_camera.far) : free_camera.far
@@ -2167,11 +2209,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		}
 		shadow_map_views.assign(shadow_map_instances.size(), VK_NULL_HANDLE);
 
-		if (shadow_map_sampler) vkDestroySampler(rtg.device, shadow_map_sampler, nullptr);
-		shadow_map_sampler = VK_NULL_HANDLE;
-
-		if (shadow_map_descriptor_pool) vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
-		shadow_map_descriptor = VK_NULL_HANDLE;
+		vkResetDescriptorPool(rtg.device, shadow_map_descriptor_pool, 0);
 
 		for (uint32_t i = 0; i < shadow_map_instances.size(); ++i) { // image view
 			{
@@ -2194,62 +2232,18 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			}
 		}
 
-		{ // https://gamedev.net/forums/topic/717811-shadow-mapping-in-vulkan-issue/
-			VkSamplerCreateInfo create_info{
-				.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-				.flags = 0,
-				.magFilter = VK_FILTER_LINEAR,
-				.minFilter = VK_FILTER_LINEAR,
-				.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-				.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-				.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-				.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-				.mipLodBias = 0.f,
-				.anisotropyEnable  = VK_FALSE,
-				.maxAnisotropy = 0.f,
-				.compareEnable = VK_TRUE,
-				.compareOp = VK_COMPARE_OP_LESS,
-				.minLod = 0.f,
-				.maxLod = VK_LOD_CLAMP_NONE,
-				.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
-				.unnormalizedCoordinates = VK_FALSE,
+		{ // allocate
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = shadow_map_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set9_Shadows,
 			};
-			VK( vkCreateSampler(rtg.device, &create_info, nullptr, &shadow_map_sampler) );
-		}
-
-		{ // create the shadow map descriptor pool
-			uint32_t per_shadow = (uint32_t)shadow_map_instances.size();
-			per_shadow = 128;
-			std::array< VkDescriptorPoolSize, 1 > pool_sizes{
-				VkDescriptorPoolSize{
-					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-					.descriptorCount = 1 * 1 * per_shadow, // one desc per set, on set per shadow_map
-				},
-			};
-
-			VkDescriptorPoolCreateInfo create_info{
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-				.flags = 0, // because CREATE_FREE_DESCRIPTOR_SET_BIT isn't included, *can't* free individuals descriptors allocated from this pool
-				.maxSets = 1, // one set
-				.poolSizeCount = uint32_t(pool_sizes.size()),
-				.pPoolSizes = pool_sizes.data(),
-			};
-
-			VK( vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &shadow_map_descriptor_pool) );
+			
+			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &shadow_map_descriptor) );
 		}
 
 		{
-			{ // allocate
-				VkDescriptorSetAllocateInfo alloc_info{
-					.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-					.descriptorPool = shadow_map_descriptor_pool,
-					.descriptorSetCount = 1,
-					.pSetLayouts = &objects_pipeline.set9_Shadows,
-				};
-				
-				VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &shadow_map_descriptor) );
-			}
-
 			std::vector< VkDescriptorImageInfo > infos(shadow_map_instances.size());
 			std::vector< VkWriteDescriptorSet > writes(shadow_map_instances.size());
 			
@@ -2768,6 +2762,8 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 
 		vkCmdEndRenderPass(workspace.command_buffer);
 	}
+
+
 
 	//end rec
 	VK ( vkEndCommandBuffer(workspace.command_buffer) );
