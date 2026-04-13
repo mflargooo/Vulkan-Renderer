@@ -269,7 +269,7 @@ struct Viewer : RTG::Application {
 
 		float fov = 60.f / 180.f * float(M_PI); // vfov (rad)
 		float near = .1f; // near clip
-		float far = 1000.f; // far clip
+		float far = 2000.f; // far clip
 	} free_camera, debug_camera;
 
 	struct Camera {
@@ -315,7 +315,6 @@ struct Viewer : RTG::Application {
 		Material material;
 	};
 	std::vector< ObjectInstance > object_instances;
-	std::vector< ObjectInstance > chunk_instances;
 
 	std::unordered_map< std::string, ObjectsPipeline::Light > lights;
 	std::vector< ObjectsPipeline::Light > light_instances;
@@ -336,8 +335,8 @@ struct Viewer : RTG::Application {
 	std::unordered_map< std::string, uint32_t > cubemap_ids;
 
 	struct Terrain {
-		glm::uvec3 grid_dims = glm::uvec3(0); // grid of chunks
-		glm::uvec3 chunk_dims = glm::uvec3(0);
+		glm::uvec3 grid_size = glm::uvec3(0); // grid of chunks
+		glm::uvec3 chunk_size = glm::uvec3(0);
 
 		uint32_t octaves = 0;
 		float frequency = .02f;
@@ -360,6 +359,7 @@ struct Viewer : RTG::Application {
 		Helpers::AllocatedBuffer Transforms;
 		VkDescriptorSet Transforms_descriptors = VK_NULL_HANDLE;
 	} terrain;
+	std::vector< Terrain::Chunk * > visible_chunks; // computed every update, if CPU culling on
 
 	int load_scene(const std::string &file);
 	void parse_scene_graph();

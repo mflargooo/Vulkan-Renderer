@@ -700,7 +700,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 	// ------------------ run terrain computation ------------------
 
 	if (terrain.octaves > 0) {
-		uint32_t num_chunks = terrain.grid_dims.x * terrain.grid_dims.y * terrain.grid_dims.z;
+		uint32_t num_chunks = terrain.grid_size.x * terrain.grid_size.y * terrain.grid_size.z;
 
 		VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 		VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
@@ -799,9 +799,9 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			for (uint32_t i = 0; i < num_chunks; ++i) {
 				Terrain::Chunk chunk;
 
-				uint32_t p = i / (terrain.grid_dims.y * terrain.grid_dims.z);
-				uint32_t q = (i / terrain.grid_dims.z) % (terrain.grid_dims.y);
-				uint32_t r = i % terrain.grid_dims.z; 
+				uint32_t p = i / (terrain.grid_size.y * terrain.grid_size.z);
+				uint32_t q = (i / terrain.grid_size.z) % (terrain.grid_size.y);
+				uint32_t r = i % terrain.grid_size.z; 
 
 				// --------------- bind
 				{
@@ -871,7 +871,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 				{ // pass 0: counting vertices
 					{
 						TerrainPipeline::Constants constants{
-							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
+							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_size)) * glm::vec3(terrain.chunk_size),
 							.chunk_id = i,
 							.pass_id = 0,		
 							
@@ -884,7 +884,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 					}
 
 					{ // dispatch
-						vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_dims.x / 8, terrain.chunk_dims.y / 8, terrain.chunk_dims.z / 8);
+						vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_size.x / 8, terrain.chunk_size.y / 8, terrain.chunk_size.z / 8);
 					}
 				}
 			}
@@ -908,30 +908,30 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		rtg.helpers.destroy_buffer(std::move(dummy_vertices));
 
 		// chunk id + vertex count
-		std::vector< std::pair< uint32_t, uint32_t > > visible_chunks;	
+		std::vector< std::pair< uint32_t, uint32_t > > nonempty_chunks;	
 		{ // setup for pass 1
 			for (uint32_t i = 0; i < num_chunks; ++i) {
 				uint32_t num_vertices = get_indirect_cmd(i).vertexCount;
 				if (num_vertices == 0) continue;
 
-				visible_chunks.emplace_back(i, num_vertices);
+				nonempty_chunks.emplace_back(i, num_vertices);
 			}
 
-			terrain.chunks.reserve(visible_chunks.size());
+			terrain.chunks.reserve(nonempty_chunks.size());
 		}
 
 		// tight reallocate
 		if (terrain.vertices_per_chunk.handle) rtg.helpers.destroy_buffer(std::move(terrain.vertices_per_chunk));
 		terrain.vertices_per_chunk = rtg.helpers.create_buffer(
-			visible_chunks.size() * sizeof(VkDrawIndirectCommand),
+			nonempty_chunks.size() * sizeof(VkDrawIndirectCommand),
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
 			Helpers::Mapped
 		);
 
-		reset_indirect_cmds((uint32_t)(visible_chunks.size()));
+		reset_indirect_cmds((uint32_t)(nonempty_chunks.size()));
 
-		for (uint32_t c = 0; c < visible_chunks.size(); ++c) {
+		for (uint32_t c = 0; c < nonempty_chunks.size(); ++c) {
 			get_indirect_cmd(c).firstInstance = c;
 		}
 		
@@ -948,19 +948,19 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
 			
-			for (uint32_t c = 0; c < visible_chunks.size(); ++c) {
-				auto [i, vertex_count] = visible_chunks[c];
+			for (uint32_t c = 0; c < nonempty_chunks.size(); ++c) {
+				auto [i, vertex_count] = nonempty_chunks[c];
 				terrain.chunks.emplace_back();
 				Terrain::Chunk &chunk = terrain.chunks.back();
 
-				uint32_t p = i / (terrain.grid_dims.y * terrain.grid_dims.z);
-				uint32_t q = (i / terrain.grid_dims.z) % (terrain.grid_dims.y);
-				uint32_t r = i % terrain.grid_dims.z; 
+				uint32_t p = i / (terrain.grid_size.y * terrain.grid_size.z);
+				uint32_t q = (i / terrain.grid_size.z) % (terrain.grid_size.y);
+				uint32_t r = i % terrain.grid_size.z; 
 
 				{
 					glm::mat4 xf = glm::translate(
 						glm::mat4(1.f), 
-							(glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims) 
+							(glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_size)) * glm::vec3(terrain.chunk_size) 
 					);
 					chunk.transform = ObjectsPipeline::Transform {
 						.WORLD_FROM_LOCAL = xf,
@@ -1043,7 +1043,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 				{ // pass 1
 					{
 						TerrainPipeline::Constants constants{
-							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_dims)) * glm::vec3(terrain.chunk_dims),
+							.chunk_center = (glm::vec3(p, q, r) - .5f * glm::vec3(terrain.grid_size)) * glm::vec3(terrain.chunk_size),
 							.chunk_id = c,
 							.pass_id = 1,
 
@@ -1056,7 +1056,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 					}
 
 					{ // dispatch
-						vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_dims.x / 8, terrain.chunk_dims.y / 8, terrain.chunk_dims.z / 8);
+						vkCmdDispatch(terrain_compute_cmd_buffer, terrain.chunk_size.x / 8, terrain.chunk_size.y / 8, terrain.chunk_size.z / 8);
 					}
 				}
 			}			
@@ -1091,6 +1091,8 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 			VK( vkAllocateDescriptorSets(rtg.device, &alloc_info, &terrain.Transforms_descriptors) );
 		}
 	}
+
+	debug_camera.far = free_camera.far * 2.f;
 }
 
 Viewer::~Viewer() {
@@ -1713,8 +1715,8 @@ int Viewer::load_scene(const std::string &filename) {
 		terrain.frequency = pterrain.frequency;
 		terrain.amplitude = pterrain.amplitude;
 
-		terrain.chunk_dims = glm::uvec3(32, 32, 32);
-		terrain.grid_dims = glm::uvec3(32, 32, 4);
+		terrain.chunk_size = pterrain.chunk_size;
+		terrain.grid_size = pterrain.grid_size;
 	}
 
 	parse_scene_graph();
@@ -2661,14 +2663,14 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			// push constants type
 			vkCmdPushConstants(workspace.command_buffer, objects_pipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ObjectsPipeline::Constants), &constants);
 
-			for (auto &chunk : terrain.chunks) {
+			for (auto chunk : visible_chunks) {
 				{
-					std::array< VkBuffer, 1 > vertex_buffers{ chunk.vertices.handle };
+					std::array< VkBuffer, 1 > vertex_buffers{ chunk->vertices.handle };
 					std::array< VkDeviceSize, 1 > offsets{ 0 };
 					vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 				}
 
-				uint32_t c = (uint32_t)(&chunk - &terrain.chunks[0]);
+				uint32_t c = (uint32_t)(chunk - &terrain.chunks[0]);
 				vkCmdDrawIndirect(workspace.command_buffer, terrain.vertices_per_chunk.handle, c * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
 			}
 		}
@@ -3005,12 +3007,97 @@ void Viewer::update(float dt) {
 		// clear drawables
 		lines_vertices.clear(); 
 		drawables.clear();
+		visible_chunks.clear();
 
 		glm::mat4 WORLD_FROM_CLIP = (camera_mode == CameraMode::Debug) ? 
 			glm::inverse(debug_CLIP_FROM_WORLD) : glm::inverse(CLIP_FROM_WORLD);
 
+		// frustrum in clip space transformed to world
+		glm::vec4 frustrum4[8] = {
+			WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f, 0.f,  1.f }, // near bl
+			WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f, 0.f,  1.f }, // near br
+			WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f, 0.f,  1.f }, // near tl
+			WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f, 0.f,  1.f }, // near tr
+
+			WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f,  1.f,  1.f }, // far bl
+			WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f,  1.f,  1.f }, // far br
+			WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f,  1.f,  1.f }, // far tl
+			WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f,  1.f,  1.f }, // far tr
+		};
+
+		glm::vec3 frustrum[8];
+		for (size_t i = 0; i < 8; ++i) {
+			frustrum[i] = glm::vec3(frustrum4[i]) / frustrum4[i].w;
+		}
+
 		for (auto &inst : terrain.chunks) {
 			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;
+
+			glm::mat4 WORLD_FROM_LOCAL = inst.transform.WORLD_FROM_LOCAL;
+			glm::vec3 bbox[8] = {
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ 0.f, 0.f, 0.f, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ float(terrain.chunk_size.x), 0.f, 0.f, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ float(terrain.chunk_size.x), float(terrain.chunk_size.y), 0.f, 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ 0.f, float(terrain.chunk_size.y), 0.f, 1.f }),
+
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ 0.f, 0.f, float(terrain.chunk_size.z), 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ float(terrain.chunk_size.x), 0.f, float(terrain.chunk_size.z), 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ float(terrain.chunk_size.x), float(terrain.chunk_size.y), float(terrain.chunk_size.z), 1.f }),
+				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ 0.f, float(terrain.chunk_size.y), float(terrain.chunk_size.z), 1.f }),
+			};
+
+			bool cull = false;
+			if (rtg.configuration.culling_mode == "frustrum") {
+				cull = cull_frustrum(frustrum, bbox);
+			}
+
+			if (rtg.configuration.debug && camera_mode == CameraMode::Debug) {
+				glm::u8vec4 bbox_color = glm::u8vec4(0, 255, 0, 255);
+				if (cull) {
+					// switch to red color if culled
+					bbox_color = glm::u8vec4(255, 0, 0, 255);
+				}
+
+				{ // draw bbox for debug
+					// draw bottom face
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[(i+1) % 4],
+							.Color = bbox_color
+						});
+					}
+
+					// draw top face
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[4 + i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[4 + (i+1) % 4],
+							.Color = bbox_color
+						});
+					}
+
+					// connect faces
+					for (size_t i = 0; i < 4; ++i) {
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i],
+							.Color = bbox_color
+						});
+						lines_vertices.emplace_back(PosColVertex{
+							.Position = bbox[i+4],
+							.Color = bbox_color
+						});
+					}
+				}
+			}
+
+			if (!cull) visible_chunks.emplace_back(&inst);
 		}
 
 		// create object instance from terrain chunks		
@@ -3030,24 +3117,6 @@ void Viewer::update(float dt) {
 				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.max.x, aabb.max.y, aabb.max.z, 1.f }),
 				glm::vec3(WORLD_FROM_LOCAL * glm::vec4{ aabb.min.x, aabb.max.y, aabb.max.z, 1.f }),
 			};
-
-			// frustrum in clip space transformed to world
-			glm::vec4 frustrum4[8] = {
-				WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f, 0.f,  1.f }, // near bl
-				WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f, 0.f,  1.f }, // near br
-				WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f, 0.f,  1.f }, // near tl
-				WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f, 0.f,  1.f }, // near tr
-
-				WORLD_FROM_CLIP * glm::vec4{ -1.f, -1.f,  1.f,  1.f }, // far bl
-				WORLD_FROM_CLIP * glm::vec4{  1.f, -1.f,  1.f,  1.f }, // far br
-				WORLD_FROM_CLIP * glm::vec4{  1.f,  1.f,  1.f,  1.f }, // far tl
-				WORLD_FROM_CLIP * glm::vec4{ -1.f,  1.f,  1.f,  1.f }, // far tr
-			};
-
-			glm::vec3 frustrum[8];
-			for (size_t i = 0; i < 8; ++i) {
-				frustrum[i] = glm::vec3(frustrum4[i]) / frustrum4[i].w;
-			}
 
 			bool cull = false;
 			if (rtg.configuration.culling_mode == "frustrum") {
