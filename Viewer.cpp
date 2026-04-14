@@ -699,12 +699,23 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 	// ------------------ run terrain computation ------------------
 
+	// timing GPU terrain compute time - https://docs.vulkan.org/samples/latest/samples/api/timestamp_queries/README.html
 	if (terrain.octaves > 0) {
 		uint32_t num_chunks = terrain.grid_size.x * terrain.grid_size.y * terrain.grid_size.z;
 
 		VkCommandBuffer terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 		VkCommandPool terrain_compute_cmd_pool = VK_NULL_HANDLE;
-		
+		VkQueryPool terrain_compute_query_pool = VK_NULL_HANDLE;
+				
+		if (rtg.configuration.debug) {
+			VkQueryPoolCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+				.queryType = VK_QUERY_TYPE_TIMESTAMP,
+				.queryCount = 2,
+			};
+			VK ( vkCreateQueryPool(rtg.device, &create_info, nullptr, &terrain_compute_query_pool) );
+		}
+
 		{
 			VkCommandPoolCreateInfo create_info{
 				.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -783,15 +794,20 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		};
 
 		reset_indirect_cmds(num_chunks);
-
+		
 		{ // rec pass 0
-
 			{
 				VkCommandBufferBeginInfo begin_info{
 					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 					.flags = 0,
 				};
 				VK( vkBeginCommandBuffer(terrain_compute_cmd_buffer, &begin_info) );
+
+			}
+
+			if (rtg.configuration.debug) {
+				vkCmdResetQueryPool(terrain_compute_cmd_buffer, terrain_compute_query_pool, 0, 2);
+				vkCmdWriteTimestamp(terrain_compute_cmd_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, terrain_compute_query_pool, 0);
 			}
 
 			vkCmdBindPipeline(terrain_compute_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_pipeline.handle);
@@ -891,7 +907,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 			VK( vkEndCommandBuffer(terrain_compute_cmd_buffer) );
 		}
-
+		
 		{
 			VkSubmitInfo submit_info{
 				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -903,9 +919,7 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 		}
 
 		VK( vkQueueWaitIdle(rtg.graphics_queue) );
-		
 		VK( vkResetDescriptorPool(rtg.device, terrain.descriptor_pool, 0) );
-		rtg.helpers.destroy_buffer(std::move(dummy_vertices));
 
 		// chunk id + vertex count
 		std::vector< std::pair< uint32_t, uint32_t > > nonempty_chunks;	
@@ -1060,6 +1074,11 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 					}
 				}
 			}			
+			
+			if (rtg.configuration.debug) {
+				vkCmdWriteTimestamp(terrain_compute_cmd_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, terrain_compute_query_pool, 1);
+			}
+			
 			VK( vkEndCommandBuffer(terrain_compute_cmd_buffer) );
 		}
 
@@ -1075,10 +1094,25 @@ Viewer::Viewer(RTG &rtg_) : rtg(rtg_) {
 
 		VK( vkQueueWaitIdle(rtg.graphics_queue) );
 
+		if (rtg.configuration.debug) {
+			VkPhysicalDeviceProperties props;
+			vkGetPhysicalDeviceProperties(rtg.physical_device, &props);
+			float period = props.limits.timestampPeriod;
+
+			uint64_t timestamps[2];
+			vkGetQueryPoolResults(rtg.device, terrain_compute_query_pool, 0, 2, 2 * sizeof(uint64_t), &timestamps, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+			std::cout << "[TIME] Terrain took " << (double)(timestamps[1] - timestamps[0]) * ((double)period * 1e-6) << " ms to compute." << std::endl;
+			std::cout << "       grid_size = (" << terrain.grid_size.x << ", " << terrain.grid_size.y << ", " << terrain.grid_size.z << ") and chunk_size = (" << terrain.chunk_size.x << ", " << terrain.chunk_size.y << ", " << terrain.chunk_size.z << ");" << std::endl;
+			std::cout << "       total (in voxels) size = (" << terrain.grid_size.x * terrain.chunk_size.x << ", " << terrain.grid_size.y * terrain.chunk_size.y << ", " << terrain.grid_size.z * terrain.chunk_size.z << ");" << std::endl;
+		}
+
+		rtg.helpers.destroy_buffer(std::move(dummy_vertices));
 		vkFreeCommandBuffers(rtg.device, terrain_compute_cmd_pool, 1, &terrain_compute_cmd_buffer);
 		terrain_compute_cmd_buffer = VK_NULL_HANDLE;
 		vkDestroyCommandPool(rtg.device, terrain_compute_cmd_pool, nullptr);
 		terrain_compute_cmd_pool = VK_NULL_HANDLE;
+		vkDestroyQueryPool(rtg.device, terrain_compute_query_pool, nullptr);
+		terrain_compute_query_pool = VK_NULL_HANDLE;
 
 		{ // allocate descriptor set for terrain Transforms descriptor in preparation for rendering
 			VkDescriptorSetAllocateInfo alloc_info{

@@ -978,10 +978,11 @@ void RTG::run(Application &application) {
 			float dt = float(std::chrono::duration< double >(after - before).count());
 			before = after;
 
-			dt = std::min(dt, .1f); // lag if frame rate dips too low
+			// dt = std::min(dt, .1f); // lag if frame rate dips too low
 
 			// in headless mode, override dt
 			if (configuration.headless) dt = headless_dt;
+			if (configuration.debug) std::cout << "[TIME] frame time: " << dt << " ms" << std::endl;
 
 			application.update(dt);
 		}
