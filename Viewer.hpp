@@ -342,7 +342,6 @@ struct Viewer : RTG::Application {
 		float frequency = .02f;
 		float amplitude = 1.f;
 
-		// Terrain vertices, 16 per voxel
 		struct Chunk {
 			ObjectsPipeline::Transform transform; // transforms chunk-local to work space
 			Helpers::AllocatedBuffer vertices; // local vertex positions

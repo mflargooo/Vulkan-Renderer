@@ -2627,7 +2627,7 @@ void Viewer::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			);
 		}
 
-		if (!terrain.chunks.empty()) {
+		if (!visible_chunks.empty()) {
 			{ // bind World, Transforms, Camera descriptor sets
 				std::array< VkDescriptorSet, 3 > descriptor_sets {
 					workspace.World_descriptors, // 0: World
